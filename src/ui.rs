@@ -18,17 +18,40 @@ pub fn read_input() -> String {
 pub fn render(game: &Game) {
     clear_screen();
 
+    // Main title
     println!(
         "Colony name: {} - day {}\n",
         game.colony.name, game.world.days
     );
 
+    // State
     println!(
         "POP: {} | WOOD: {} | STONE: {} | FOOD: {}\n",
         game.colony.population, game.colony.wood, game.colony.stone, game.colony.food
     );
+
+    // Some logs
     print_logs(game);
-    println!("w - get tree | s - get stone | f - get food | q - quit");
+
+    // Dynamic hint render
+    let wood_hint = format!(
+        "w - wood (+{}, -{} food)",
+        game.balance.gather_wood_base, game.balance.gather_wood_cost
+    );
+    let stone_hint = format!(
+        "s - stone (+{}, -{} food)",
+        game.balance.gather_stone_base, game.balance.gather_stone_cost
+    );
+    let food_hint = if game.balance.gather_food_cost == 0 {
+        format!("f - food (+{})", game.balance.gather_food_base)
+    } else {
+        format!(
+            "f - food (+{}, -{} food)",
+            game.balance.gather_food_base, game.balance.gather_food_cost
+        )
+    };
+
+    println!("{wood_hint} | {stone_hint} | {food_hint} | q - quit");
 }
 
 pub fn print_logs(game: &Game) {
