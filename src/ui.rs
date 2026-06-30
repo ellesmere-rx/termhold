@@ -26,9 +26,15 @@ pub fn render(game: &Game) {
 
     // State
     println!(
-        "POP: {} | WOOD: {} | STONE: {} | FOOD: {}\n",
-        game.colony.population, game.colony.wood, game.colony.stone, game.colony.food
+        "POP: {}/{} | WOOD: {} | STONE: {} | FOOD: {}\n",
+        game.colony.population,
+        game.colony.max_population,
+        game.colony.wood,
+        game.colony.stone,
+        game.colony.food
     );
+
+    println!("BUILDINGS\nHUTS: {}\n", game.colony.huts);
 
     // Some logs
     print_logs(game);
@@ -50,8 +56,14 @@ pub fn render(game: &Game) {
             game.balance.gather_food_base, game.balance.gather_food_cost
         )
     };
+    let hut_hint = format!(
+        "h - build a hut (-{} wood, -{} food, +{} max pop)",
+        game.balance.build_hut_wood_cost,
+        game.balance.build_hut_food_cost,
+        game.balance.hut_max_population_increase
+    );
 
-    println!("{wood_hint} | {stone_hint} | {food_hint} | q - quit");
+    println!("{wood_hint} | {stone_hint} | {food_hint} | {hut_hint} | q - quit");
 }
 
 pub fn print_logs(game: &Game) {
@@ -67,6 +79,7 @@ pub fn read_command() -> Option<Commands> {
         "w" => Some(Commands::GetWood),
         "s" => Some(Commands::GetStone),
         "f" => Some(Commands::GetFood),
+        "h" => Some(Commands::BuildHut),
         "q" => Some(Commands::Quit),
         _ => None,
     }

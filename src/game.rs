@@ -5,6 +5,7 @@ pub enum Commands {
     GetWood,
     GetStone,
     GetFood,
+    BuildHut,
     Quit,
 }
 
@@ -26,6 +27,8 @@ pub struct Colony {
     pub stone: usize,
     pub food: usize,
     pub population: usize,
+    pub max_population: usize,
+    pub huts: usize,
 }
 
 impl Colony {
@@ -55,6 +58,20 @@ impl Colony {
         self.food += balance.gather_food_base;
         Ok(balance.gather_food_base)
     }
+
+    pub fn build_hut(&mut self, balance: &Balance) -> Result<usize, &'static str> {
+        if self.food < balance.build_hut_food_cost {
+            return Err("Not enough food to build a hut!");
+        }
+        if self.wood < balance.build_hut_wood_cost {
+            return Err("Not enough wood to build a hut!");
+        }
+        self.food -= balance.build_hut_food_cost;
+        self.wood -= balance.build_hut_wood_cost;
+        self.huts += 1;
+        self.max_population += balance.hut_max_population_increase;
+        Ok(1)
+    }
 }
 
 impl Default for Colony {
@@ -65,6 +82,8 @@ impl Default for Colony {
             stone: 30,
             food: 25,
             population: 5,
+            max_population: 5,
+            huts: 1,
         }
     }
 }
@@ -76,6 +95,11 @@ pub struct Balance {
     pub gather_stone_cost: usize,
     pub gather_food_base: usize,
     pub gather_food_cost: usize,
+    pub population_increase_cost: usize,
+
+    pub build_hut_wood_cost: usize,
+    pub build_hut_food_cost: usize,
+    pub hut_max_population_increase: usize,
 }
 
 impl Default for Balance {
@@ -87,6 +111,10 @@ impl Default for Balance {
             gather_stone_cost: 1,
             gather_food_base: 8,
             gather_food_cost: 0,
+            build_hut_wood_cost: 10,
+            hut_max_population_increase: 5,
+            population_increase_cost: 5,
+            build_hut_food_cost: 1,
         }
     }
 }
@@ -108,14 +136,26 @@ impl Game {
         }
 
         // Colony consumes food
-        let consumed_food = self.colony.population;
         if self.colony.food < self.colony.population {
             self.colony.food = 0; // съели остатки
             self.logs("Not enough food! Colony is starving, population is decreasing (-1)".into());
             self.colony.population = self.colony.population.saturating_sub(1);
         } else {
             self.colony.food -= self.colony.population;
-            self.logs(format!("Colony consumes {} food", consumed_food));
+            self.logs(format!("Colony consumes {} food", self.colony.population));
+            if self.colony.food >= self.balance.population_increase_cost
+                && self.colony.population + 1 <= self.colony.max_population
+            {
+                self.colony.food = self
+                    .colony
+                    .food
+                    .saturating_sub(self.balance.population_increase_cost);
+                self.colony.population += 1;
+                self.logs(format!(
+                    "population +{} food -{}",
+                    1, self.balance.population_increase_cost
+                ));
+            }
         }
 
         // Days
@@ -142,6 +182,15 @@ impl Game {
                 Ok(gain) => self.logs(format!(
                     "Gathered food (+{gain}), spent {} food",
                     self.balance.gather_food_cost
+                )),
+                Err(msg) => self.logs(msg.to_string()),
+            },
+            Commands::BuildHut => match self.colony.build_hut(&self.balance) {
+                Ok(gain) => self.logs(format!(
+                    "Huts (+{gain}), max pop +{}, spent {} food, spent {} wood",
+                    self.balance.hut_max_population_increase,
+                    self.balance.build_hut_food_cost,
+                    self.balance.build_hut_wood_cost
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
