@@ -8,11 +8,19 @@ fn main() {
 
     while !game.gameover {
         ui::render(&game);
-        if let Some(cmd) = ui::read_command() {
-            if cmd == game::Commands::Quit {
-                break;
+        match ui::read_command() {
+            ui::CommandInput::Command(cmd) => {
+                if cmd == game::Commands::Quit {
+                    break;
+                }
+                game.process_command(cmd);
             }
-            game.process_command(cmd);
+            ui::CommandInput::Invalid => {
+                game.logs(ui::INVALID_COMMAND_MSG.into());
+            }
+            ui::CommandInput::Empty => {
+                game.logs(ui::EMPTY_COMMAND_MSG.into());
+            }
         }
         game.tick();
     }
