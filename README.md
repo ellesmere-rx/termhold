@@ -6,12 +6,15 @@
 
 *Resources*:
 - Wood / Stone - basic resources for building 
+
 Needed for upgrading your colony and building new structures.
 
 - Food - basic resource for survival
+
 Needed for survival and population growth.
 
 - Population 
+
 Needed for population growth and colony expansion. Population growth is calculated from the amount of stored food and is random.
 Additional HUTS are needed to increase max popultion.
 
