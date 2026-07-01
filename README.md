@@ -17,7 +17,7 @@ Additional HUTS are needed to increase max popultion.
 
 *Buildings*:
 
-- [X] HUT - increases max population
+- [x] HUT - increases max population
 - [ ] LUMBER YARD - increases passive wood production
 - [ ] STONE QUARRY - increases passive stone production
 - [ ] FARM - increases passive food production
@@ -33,12 +33,10 @@ Additional HUTS are needed to increase max popultion.
 - [ ] Endgame Conditions
 - [ ] Unique villagers
 - [ ] Workers system
-
-- [X] Active gathering by hand
-  - [X] Wood - base + pop * 40%
-  - [X] Food - base + pop * 50%
-  - [X] Stone - base + pop * 33%
-
+- [x] Active gathering by hand
+    - [x] Wood - base + pop * 40%
+    - [x] Food - base + pop * 50%
+    - [x] Stone - base + pop * 33%
 - [ ] Passive gathering by buildings
 
 ## FUTURE IDEAS:
@@ -46,8 +44,8 @@ Additional HUTS are needed to increase max popultion.
 - [ ] Researchings
 - [ ] Map
 - [ ] Tradesystem
-  - [ ] More complex goods (i.e. stone tools, higher quality food)
-  - [ ] Market prices based on season, random events
+    - [ ] More complex goods (i.e. stone tools, higher quality food)
+    - [ ] Market prices based on season, random events
 - [ ] AI
 - [ ] Multiplayer
 - [ ] 2D/3D graphics
