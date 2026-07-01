@@ -6,6 +6,9 @@ pub enum Commands {
     GetStone,
     GetFood,
     BuildHut,
+    BuildLumberYard,
+    // BuildStoneQuarry,
+    // BuildGranary,
     Quit,
 }
 
@@ -29,6 +32,9 @@ pub struct Colony {
     pub population: usize,
     pub max_population: usize,
     pub huts: usize,
+    //    pub granaries: usize,
+    pub lumber_yards: usize,
+    //    pub stone_quarries: usize,
 }
 
 impl Colony {
@@ -37,8 +43,8 @@ impl Colony {
             return Err("The workers were unable to gather without additional food.");
         }
         self.food -= balance.gather_wood_cost;
-        self.wood += balance.gather_wood_base;
-        Ok(balance.gather_wood_base)
+        self.wood += balance.gather_wood_base * self.population * self.lumber_yards;
+        Ok(balance.gather_wood_base * self.population * self.lumber_yards)
     }
 
     pub fn gather_stone(&mut self, balance: &Balance) -> Result<usize, &'static str> {
@@ -46,8 +52,8 @@ impl Colony {
             return Err("The workers were unable to gather without additional food.");
         }
         self.food -= balance.gather_stone_cost;
-        self.stone += balance.gather_stone_base;
-        Ok(balance.gather_stone_base)
+        self.stone += balance.gather_stone_base * self.population;
+        Ok(balance.gather_stone_base * self.population)
     }
 
     pub fn gather_food(&mut self, balance: &Balance) -> Result<usize, &'static str> {
@@ -55,8 +61,8 @@ impl Colony {
             return Err("Not enough food for food gathering!");
         }
         self.food -= balance.gather_food_cost;
-        self.food += balance.gather_food_base;
-        Ok(balance.gather_food_base)
+        self.food += balance.gather_food_base * self.population;
+        Ok(balance.gather_food_base * self.population)
     }
 
     pub fn build_hut(&mut self, balance: &Balance) -> Result<usize, &'static str> {
@@ -72,6 +78,22 @@ impl Colony {
         self.max_population += balance.hut_max_population_increase;
         Ok(1)
     }
+    pub fn build_lumber_yard(&mut self, balance: &Balance) -> Result<usize, &'static str> {
+        if self.food < balance.build_lumber_yard_food_cost {
+            return Err("Not enough food to build a lumber yard!");
+        }
+        if self.wood < balance.build_lumber_yard_wood_cost {
+            return Err("Not enough wood to build a hut!");
+        }
+        if self.stone < balance.build_lumber_yard_stone_cost {
+            return Err("Not enough stone to build a lumber yard!");
+        }
+        self.food -= balance.build_lumber_yard_food_cost;
+        self.wood -= balance.build_lumber_yard_wood_cost;
+        self.stone -= balance.build_lumber_yard_stone_cost;
+        self.lumber_yards += 1;
+        Ok(1)
+    }
 }
 
 impl Default for Colony {
@@ -84,6 +106,9 @@ impl Default for Colony {
             population: 5,
             max_population: 5,
             huts: 1,
+            //            granaries: 0,
+            lumber_yards: 1,
+            //            stone_quarries: 0,
         }
     }
 }
@@ -100,21 +125,41 @@ pub struct Balance {
     pub build_hut_wood_cost: usize,
     pub build_hut_food_cost: usize,
     pub hut_max_population_increase: usize,
+
+    pub build_lumber_yard_wood_cost: usize,
+    pub build_lumber_yard_food_cost: usize,
+    pub build_lumber_yard_stone_cost: usize,
+    //    pub build_stone_quarry_wood_cost: usize,
+    //    pub build_stone_quarry_food_cost: usize,
+    //    pub build_stone_quarry_stone_cost: usize,
+
+    //    pub build_granary_wood_cost: usize,
+    //    pub build_granary_food_cost: usize,
+    //    pub build_granary_stone_cost: usize,
 }
 
 impl Default for Balance {
     fn default() -> Self {
         Self {
-            gather_wood_base: 4,
+            gather_wood_base: 5,
             gather_wood_cost: 1,
-            gather_stone_base: 1,
-            gather_stone_cost: 1,
-            gather_food_base: 8,
+            gather_stone_base: 5,
+            gather_stone_cost: 5,
+            gather_food_base: 5,
             gather_food_cost: 0,
             build_hut_wood_cost: 10,
             hut_max_population_increase: 5,
             population_increase_cost: 5,
-            build_hut_food_cost: 1,
+            build_hut_food_cost: 5,
+            build_lumber_yard_wood_cost: 20,
+            build_lumber_yard_food_cost: 10,
+            build_lumber_yard_stone_cost: 50,
+            //            build_stone_quarry_wood_cost: 50,
+            //            build_stone_quarry_food_cost: 10,
+            //            build_stone_quarry_stone_cost: 20,
+            //            build_granary_wood_cost: 100,
+            //            build_granary_food_cost: 20,
+            //            build_granary_stone_cost: 100,
         }
     }
 }
@@ -191,6 +236,15 @@ impl Game {
                     self.balance.hut_max_population_increase,
                     self.balance.build_hut_food_cost,
                     self.balance.build_hut_wood_cost
+                )),
+                Err(msg) => self.logs(msg.to_string()),
+            },
+            Commands::BuildLumberYard => match self.colony.build_lumber_yard(&self.balance) {
+                Ok(gain) => self.logs(format!(
+                    "Lumber yards (+{gain}), wood gathering multiplier (+{gain}), spent {} food, spent {} wood, spent {} stone",
+                    self.balance.build_lumber_yard_food_cost,
+                    self.balance.build_lumber_yard_wood_cost,
+                    self.balance.build_lumber_yard_stone_cost
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
