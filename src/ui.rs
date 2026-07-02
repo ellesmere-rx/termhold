@@ -3,8 +3,9 @@ use std::io;
 use crate::game::Commands;
 use crate::game::Game;
 
-const VISIBLE_LOGS: usize = 8;
-const WIDTH: usize = 50;
+const WIDTH: usize = 80;
+const VISIBLE_LOGS: usize = 10;
+const LABEL_W: usize = 12;
 
 pub fn clear_screen() {
     print!("\x1B[2J\x1B[H");
@@ -16,21 +17,25 @@ pub fn read_input() -> String {
     input.trim().to_string()
 }
 
-fn line() {
+fn hr() {
     println!("{}", "─".repeat(WIDTH));
 }
 
-fn title(text: &str) {
-    println!(" {text}");
-    line();
+fn section(title: &str) {
+    println!(" {title}");
+    hr();
 }
 
 fn row(label: &str, value: impl std::fmt::Display) {
-    println!("  {:<16} {value}", label);
+    println!("  {label:<LABEL_W$} {value}");
 }
 
-fn action(cmd: &str, detail: &str) {
-    println!("  {cmd:<22} {detail}");
+fn clip(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max.saturating_sub(1)])
+    }
 }
 
 fn signed_delta(value: isize) -> String {
@@ -38,19 +43,6 @@ fn signed_delta(value: isize) -> String {
         format!("+{value}")
     } else {
         format!("{value}")
-    }
-}
-
-fn gather_action_detail(yield_amount: usize, free: usize, resource: &str) -> String {
-    if free == 0 {
-        "blocked (no free settlers)".to_string()
-    } else {
-        format!(
-            "{} {} ({} free)",
-            signed_delta(yield_amount as isize),
-            resource,
-            free
-        )
     }
 }
 
@@ -68,8 +60,13 @@ fn parse_command(input: &str) -> Option<Commands> {
         "g" | "gather" => parse_gather(&target),
         "b" | "build" => parse_build(&target),
         "d" | "demolish" => parse_demolish(&target),
+        "w" | "workers" | "work" => parse_workers(&target),
         _ => None,
     }
+}
+
+fn is_help_input(input: &str) -> bool {
+    matches!(input.trim().to_lowercase().as_str(), "help" | "?" | "h")
 }
 
 fn parse_gather(target: &str) -> Option<Commands> {
@@ -109,6 +106,109 @@ fn parse_demolish(target: &str) -> Option<Commands> {
     }
 }
 
+fn parse_workers(input: &str) -> Option<Commands> {
+    use crate::game::WorkerSite;
+
+    if input == "auto" {
+        return Some(Commands::WorkersAuto);
+    }
+
+    let parts: Vec<&str> = input.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let count: usize = parts.last()?.parse().ok()?;
+    let building = parts[..parts.len() - 1].join(" ");
+
+    let site = match building.as_str() {
+        "farm" => WorkerSite::Farm,
+        "lumber" | "lumberyard" | "lumber-yard" | "lumber_yard" | "lumber yard" | "yard" => {
+            WorkerSite::Lumber
+        }
+        "quarry" | "stone-quarry" | "stonequarry" | "stone quarry" => WorkerSite::Quarry,
+        _ => return None,
+    };
+
+    Some(Commands::SetWorkers { site, count })
+}
+
+fn render_build_menu(balance: &crate::game::Balance) {
+    section("BUILD");
+    row("b hut", format!(
+        "{}w {}s → +{} pop",
+        balance.build_hut_wood_cost,
+        balance.build_hut_stone_cost,
+        balance.hut_max_population_increase,
+    ));
+    row("b farm", format!(
+        "{}w {}s → +{} food/d, {} workers",
+        balance.build_farm_wood_cost,
+        balance.build_farm_stone_cost,
+        balance.farm_food_production,
+        balance.farm_max_workers,
+    ));
+    row("b lumber", format!(
+        "{}w {}s → +{} wood/d, {} workers",
+        balance.build_lumber_yard_wood_cost,
+        balance.build_lumber_yard_stone_cost,
+        balance.lumber_yard_wood_production,
+        balance.lumber_yard_max_workers,
+    ));
+    row("b quarry", format!(
+        "{}w {}s → +{} stone/d, {} workers",
+        balance.build_stone_quarry_wood_cost,
+        balance.build_stone_quarry_stone_cost,
+        balance.stone_quarry_stone_production,
+        balance.stone_quarry_max_workers,
+    ));
+    row("b barn", format!(
+        "{}w {}s → +{} food cap",
+        balance.build_barn_wood_cost,
+        balance.build_barn_stone_cost,
+        balance.barn_max_food_storage_increase,
+    ));
+    row("d", "farm / lumber / quarry — no refund");
+    println!();
+}
+
+fn gather_short(yield_amount: usize, free: usize, abbrev: &str) -> String {
+    if free == 0 {
+        "blocked".to_string()
+    } else {
+        format!("{}{abbrev}", signed_delta(yield_amount as isize))
+    }
+}
+
+fn food_gather_hint(
+    food_active: usize,
+    food_potential: usize,
+    food_net: isize,
+    food: usize,
+    max_food: usize,
+    free: usize,
+) -> String {
+    if free == 0 {
+        return "blocked".to_string();
+    }
+
+    let space = max_food.saturating_sub(food);
+    if space == 0 {
+        return format!(
+            "blocked (storage {food}/{max_food})"
+        );
+    }
+
+    let yield_part = format!("{}{}", signed_delta(food_active as isize), " food");
+    let net_part = format!("net {}", signed_delta(food_net));
+
+    if food_active < food_potential {
+        format!("{yield_part} ({net_part}, +{space} cap left)")
+    } else {
+        format!("{yield_part} ({net_part})")
+    }
+}
+
 pub fn render(game: &Game) {
     clear_screen();
 
@@ -122,62 +222,62 @@ pub fn render(game: &Game) {
     let passive_wood = colony.passive_wood(balance);
     let passive_stone = colony.passive_stone(balance);
     let passive_food = colony.passive_food(balance);
-    // Food passive actually added at tick (clipped by storage — same as apply_passive_income).
-    let passive_food_effective =
-        passive_food.min(colony.max_food.saturating_sub(colony.food));
+    let passive_food_effective = passive_food.min(colony.max_food.saturating_sub(colony.food));
     let upkeep = colony.population as isize;
-    let food_net = food_active as isize + passive_food_effective as isize - upkeep;
+    let food_net_if_gather =
+        food_active as isize + passive_food_effective as isize - upkeep;
+    let food_net_passive = passive_food_effective as isize - upkeep;
+    let free = colony.free_workers();
+    let assigned = colony.assigned_workers();
 
     println!("╔{}╗", "═".repeat(WIDTH - 2));
     println!(
         "║ {:<width$} ║",
-        format!("{} — day {}", colony.name, game.world.days),
+        format!("{} — day {} / {}", colony.name, game.world.days, crate::game::WIN_DAY),
         width = WIDTH - 4
     );
     println!("╚{}╝", "═".repeat(WIDTH - 2));
     println!();
 
-    title("RESOURCES");
-    row(
-        "Population",
-        format!("{} / {}", colony.population, colony.max_population),
-    );
+    section("COLONY");
+    let pop = if colony.population >= colony.max_population {
+        format!("{}/{} (housing full)", colony.population, colony.max_population)
+    } else {
+        format!("{}/{}", colony.population, colony.max_population)
+    };
+    row("Population", pop);
+    row("Workers", format!("{assigned} on jobs, {free} free"));
     row("Wood", colony.wood);
     row("Stone", colony.stone);
     row("Food", format!("{} / {}", colony.food, colony.max_food));
     println!();
 
-    title("BUILDINGS");
+    section("BUILDINGS");
     row("Huts", colony.huts);
-    row("Lumber yards", colony.lumber_yards);
-    row("Stone quarries", colony.stone_quarries);
-    row("Farms", colony.farms);
     row("Barns", colony.barns);
-    println!();
-
-    title("WORKERS (auto: farm → lumber → quarry)");
-    let assigned = colony.assigned_workers();
-    row("Assigned", format!("{} / {}", assigned, colony.population));
-    row("Free (gathering)", colony.free_workers());
     if colony.farms > 0 {
         row(
             "Farms",
             format!(
-                "{}/{} ({} staffed)",
+                "{} — {}/{} workers, {} staffed (+{} food/day)",
+                colony.farms,
                 colony.workers_on_farms,
                 colony.workers_needed_for_farms(balance),
-                colony.staffed_farms(balance)
+                colony.staffed_farms(balance),
+                balance.farm_food_production * colony.staffed_farms(balance),
             ),
         );
     }
     if colony.lumber_yards > 0 {
         row(
-            "Lumber",
+            "Lumber yards",
             format!(
-                "{}/{} ({} staffed)",
+                "{} — {}/{} workers, {} staffed (+{} wood/day)",
+                colony.lumber_yards,
                 colony.workers_on_lumber_yards,
                 colony.workers_needed_for_lumber_yards(balance),
-                colony.staffed_lumber_yards(balance)
+                colony.staffed_lumber_yards(balance),
+                balance.lumber_yard_wood_production * colony.staffed_lumber_yards(balance),
             ),
         );
     }
@@ -185,16 +285,21 @@ pub fn render(game: &Game) {
         row(
             "Quarries",
             format!(
-                "{}/{} ({} staffed)",
+                "{} — {}/{} workers, {} staffed (+{} stone/day)",
+                colony.stone_quarries,
                 colony.workers_on_stone_quarries,
                 colony.workers_needed_for_stone_quarries(balance),
-                colony.staffed_stone_quarries(balance)
+                colony.staffed_stone_quarries(balance),
+                balance.stone_quarry_stone_production * colony.staffed_stone_quarries(balance),
             ),
         );
     }
+    if colony.farms == 0 && colony.lumber_yards == 0 && colony.stone_quarries == 0 {
+        row("Production", "none — build farm, lumber, or quarry");
+    }
     println!();
 
-    title("PER DAY (auto at tick)");
+    section("PER DAY");
     row("Food upkeep", format!("{} food", signed_delta(-upkeep)));
     if passive_wood > 0 || passive_stone > 0 || passive_food_effective > 0 {
         row(
@@ -203,13 +308,14 @@ pub fn render(game: &Game) {
                 "{} wood, {} stone, {} food",
                 signed_delta(passive_wood as isize),
                 signed_delta(passive_stone as isize),
-                signed_delta(passive_food_effective as isize)
+                signed_delta(passive_food_effective as isize),
             ),
         );
     }
+    row("Food net", format!("{} without gather", signed_delta(food_net_passive)));
     if colony.population + 1 <= colony.max_population {
         row(
-            "Birth",
+            "Birth chance",
             format!(
                 "{}% if food ≥ pop + {}",
                 balance.birth_chance_percent, balance.population_increase_cost
@@ -218,94 +324,23 @@ pub fn render(game: &Game) {
     }
     println!();
 
-    title("COMMANDS (1 action = 1 day)");
-    println!("  g <wood|stone|food>  |  b <hut|lumber|quarry|farm|barn>  |  d <farm|lumber|quarry>  |  quit");
-    println!();
-    let free = colony.free_workers();
-    action("g wood", &gather_action_detail(wood_active, free, "wood"));
-    action(
-        "g stone",
-        &gather_action_detail(stone_active, free, "stone"),
-    );
-    let food_detail = if free == 0 {
-        "blocked (no free settlers)".to_string()
-    } else if food_active < food_potential {
-        format!(
-            "{} food (day net {}, storage full)",
-            signed_delta(food_active as isize),
-            signed_delta(food_net)
-        )
-    } else if passive_food_effective > 0 {
-        format!(
-            "{} food (day net {} incl. passive)",
-            signed_delta(food_active as isize),
-            signed_delta(food_net)
-        )
-    } else {
-        format!(
-            "{} food (day net {})",
-            signed_delta(food_active as isize),
-            signed_delta(food_net)
-        )
-    };
-    action("g food", &food_detail);
-    action(
-        "b hut",
-        &format!(
-            "-{} wood, -{} stone, +{} max pop",
-            balance.build_hut_wood_cost,
-            balance.build_hut_stone_cost,
-            balance.hut_max_population_increase
+    render_build_menu(balance);
+
+    section("ACTIONS");
+    row("g wood", gather_short(wood_active, free, " wood"));
+    row("g stone", gather_short(stone_active, free, " stone"));
+    row(
+        "g food",
+        food_gather_hint(
+            food_active,
+            food_potential,
+            food_net_if_gather,
+            colony.food,
+            colony.max_food,
+            free,
         ),
     );
-    action(
-        "b lumber",
-        &format!(
-            "-{} wood, -{} stone, +{} wood/day ({} workers/yard)",
-            balance.build_lumber_yard_wood_cost,
-            balance.build_lumber_yard_stone_cost,
-            balance.lumber_yard_wood_production,
-            balance.lumber_yard_max_workers
-        ),
-    );
-    action(
-        "b quarry",
-        &format!(
-            "-{} wood, -{} stone, +{} stone/day ({} workers/quarry)",
-            balance.build_stone_quarry_wood_cost,
-            balance.build_stone_quarry_stone_cost,
-            balance.stone_quarry_stone_production,
-            balance.stone_quarry_max_workers
-        ),
-    );
-    action(
-        "b farm",
-        &format!(
-            "-{} wood, -{} stone, +{} food/day ({} workers/farm)",
-            balance.build_farm_wood_cost,
-            balance.build_farm_stone_cost,
-            balance.farm_food_production,
-            balance.farm_max_workers
-        ),
-    );
-    action(
-        "b barn",
-        &format!(
-            "-{} wood, -{} stone, +{} food cap",
-            balance.build_barn_wood_cost,
-            balance.build_barn_stone_cost,
-            balance.barn_max_food_storage_increase
-        ),
-    );
-    if colony.farms > 0 {
-        action("d farm", "demolish 1 farm (no refund)");
-    }
-    if colony.lumber_yards > 0 {
-        action("d lumber", "demolish 1 lumber yard (no refund)");
-    }
-    if colony.stone_quarries > 0 {
-        action("d quarry", "demolish 1 quarry (no refund)");
-    }
+    row("w / help", "free — no day pass");
     println!();
 
     print_logs(game);
@@ -314,15 +349,95 @@ pub fn render(game: &Game) {
     io::Write::flush(&mut io::stdout()).unwrap();
 }
 
+pub fn show_help(game: &Game) {
+    clear_screen();
+
+    let colony = &game.colony;
+    let balance = &game.balance;
+
+    println!("=== HELP ===");
+    println!();
+    println!("Timing:");
+    println!("  g, b, d — cost 1 day");
+    println!("  w, help — free (no day pass)");
+    println!();
+    println!("Gather (g):");
+    println!("  g wood / g stone / g food");
+    println!("  Uses free settlers only; blocked at 0 free");
+    println!();
+    println!("Build (b):");
+    println!(
+        "  b hut     -{}w -{}s  +{} max pop",
+        balance.build_hut_wood_cost,
+        balance.build_hut_stone_cost,
+        balance.hut_max_population_increase
+    );
+    println!(
+        "  b farm    -{}w -{}s  +{} food/day ({} workers/farm)",
+        balance.build_farm_wood_cost,
+        balance.build_farm_stone_cost,
+        balance.farm_food_production,
+        balance.farm_max_workers
+    );
+    println!(
+        "  b lumber  -{}w -{}s  +{} wood/day ({} workers/yard)",
+        balance.build_lumber_yard_wood_cost,
+        balance.build_lumber_yard_stone_cost,
+        balance.lumber_yard_wood_production,
+        balance.lumber_yard_max_workers
+    );
+    println!(
+        "  b quarry  -{}w -{}s  +{} stone/day ({} workers/quarry)",
+        balance.build_stone_quarry_wood_cost,
+        balance.build_stone_quarry_stone_cost,
+        balance.stone_quarry_stone_production,
+        balance.stone_quarry_max_workers
+    );
+    println!(
+        "  b barn    -{}w -{}s  +{} food storage",
+        balance.build_barn_wood_cost,
+        balance.build_barn_stone_cost,
+        balance.barn_max_food_storage_increase
+    );
+    println!();
+    println!("Demolish (d): farm / lumber / quarry — no refund");
+    println!();
+    println!("Workers (w):");
+    if colony.farms > 0 {
+        println!(
+            "  w farm 0..{}",
+            colony.workers_needed_for_farms(balance)
+        );
+    }
+    if colony.lumber_yards > 0 {
+        println!(
+            "  w lumber 0..{}",
+            colony.workers_needed_for_lumber_yards(balance)
+        );
+    }
+    if colony.stone_quarries > 0 {
+        println!(
+            "  w quarry 0..{}",
+            colony.workers_needed_for_stone_quarries(balance)
+        );
+    }
+    println!("  w auto — fill farm → lumber → quarry once");
+    println!();
+    print!("Press Enter to continue...");
+    io::Write::flush(&mut io::stdout()).unwrap();
+    let _ = read_input();
+}
+
 pub fn print_logs(game: &Game) {
-    title("LOG");
+    section("LOG");
     let start = game.logs.len().saturating_sub(VISIBLE_LOGS);
+    let max = WIDTH - 4;
     if game.logs.is_empty() {
         println!("  (no events yet)");
         return;
     }
     for log in &game.logs[start..] {
-        println!("  {log}");
+        println!("  {}", clip(log, max));
     }
 }
 
@@ -332,6 +447,7 @@ pub const EMPTY_COMMAND_MSG: &str = "The settlers, like you, decided to do nothi
 
 pub enum CommandInput {
     Command(Commands),
+    Help,
     Invalid,
     Empty,
 }
@@ -340,6 +456,9 @@ pub fn read_command() -> CommandInput {
     let input = read_input();
     if input.is_empty() {
         return CommandInput::Empty;
+    }
+    if is_help_input(&input) {
+        return CommandInput::Help;
     }
 
     match parse_command(&input) {
@@ -397,5 +516,49 @@ mod tests {
             Some(Commands::DemolishStoneQuarry)
         );
         assert_eq!(parse_command("d hut"), None);
+    }
+
+    #[test]
+    fn parse_workers_commands() {
+        use crate::game::WorkerSite;
+
+        assert_eq!(parse_command("w auto"), Some(Commands::WorkersAuto));
+        assert_eq!(
+            parse_command("w farm 2"),
+            Some(Commands::SetWorkers {
+                site: WorkerSite::Farm,
+                count: 2
+            })
+        );
+        assert_eq!(
+            parse_command("workers lumber 0"),
+            Some(Commands::SetWorkers {
+                site: WorkerSite::Lumber,
+                count: 0
+            })
+        );
+        assert_eq!(parse_command("w farm"), None);
+    }
+
+    #[test]
+    fn parse_help_input() {
+        assert!(is_help_input("help"));
+        assert!(is_help_input("?"));
+        assert!(is_help_input("HELP"));
+        assert!(!is_help_input("hut"));
+    }
+
+    #[test]
+    fn food_gather_hint_partial_storage_not_full() {
+        let hint = food_gather_hint(5, 8, 0, 20, 25, 5);
+        assert!(hint.contains("+5 cap left"));
+        assert!(!hint.contains("storage full"));
+    }
+
+    #[test]
+    fn food_gather_hint_storage_full() {
+        let hint = food_gather_hint(0, 5, -5, 25, 25, 5);
+        assert!(hint.contains("blocked"));
+        assert!(hint.contains("25/25"));
     }
 }

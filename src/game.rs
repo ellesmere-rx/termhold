@@ -21,20 +21,13 @@
 //!    `staffed = workers_on_type / workers_per_building` (integer division).
 //!    A yard with 1 of 2 required workers produces nothing ("all or nothing" rule).
 //!
-//! # Worker model (auto-assign)
+//! # Workers
 //!
-//! Settlers are split into **assigned** (on farms / lumber yards / quarries) and **free**.
-//! Assigned settlers do not boost active gathering.
+//! Assignments change only when **you** run a `w` command — nothing runs automatically
+//! at end of day. `w` commands do **not** advance the day (see `main.rs`).
 //!
-//! [`Colony::auto_assign_workers`] runs:
-//! - at the end of every [`Game::tick`] (after population may have changed);
-//! - at the end of every [`Game::process_command`] (e.g. after building a farm).
-//!
-//! Assignment order (when settlers are scarce):
-//! **farms → lumber yards → stone quarries**.
-//!
-//! Optional: [`Balance::reserve_free_settlers`] keeps N settlers out of auto-assign
-//! so gathering stays possible even with many buildings.
+//! - `w farm 2` / `w lumber 0` / `w quarry 1` — set exact counts (`0` = unassign)
+//! - `w auto` — one-shot auto-fill (farm → lumber → quarry priority)
 //!
 //! Hut and barn do not employ anyone — they only raise caps (population / food storage).
 //!
@@ -51,8 +44,19 @@
 
 use rand::RngExt;
 
+/// Last day — survive to this day to win.
+pub const WIN_DAY: usize = 180;
+
 /// Maximum log lines kept in memory; oldest are dropped.
 const MAX_LOG_SIZE: usize = 100;
+
+/// Production building type for manual worker assignment (`w` command).
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum WorkerSite {
+    Farm,
+    Lumber,
+    Quarry,
+}
 
 /// Player actions parsed from CLI input in `ui.rs`.
 #[derive(PartialEq, Debug)]
@@ -68,7 +72,16 @@ pub enum Commands {
     DemolishFarm,
     DemolishLumberYard,
     DemolishStoneQuarry,
+    SetWorkers { site: WorkerSite, count: usize },
+    WorkersAuto,
     Quit,
+}
+
+impl Commands {
+    /// Worker commands are free — re-render without advancing the day.
+    pub fn is_worker_management(&self) -> bool {
+        matches!(self, Commands::SetWorkers { .. } | Commands::WorkersAuto)
+    }
 }
 
 /// Global time — only `days` for now. Incremented at the very end of each [`Game::tick`].
@@ -86,8 +99,7 @@ impl Default for World {
 
 /// All mutable colony state: resources, caps, building counts, worker assignments.
 ///
-/// Worker fields (`workers_on_*`) are written only by [`Colony::auto_assign_workers`];
-/// they are a cache of the last auto-assignment, not manual player input.
+/// Worker fields (`workers_on_*`) hold the current assignment (manual or from auto-assign).
 pub struct Colony {
     pub name: String,
 
@@ -166,7 +178,7 @@ impl Colony {
 
     /// Total settlers currently working at production buildings.
     pub fn assigned_workers(&self) -> usize {
-        self.population - self.free_workers()
+        self.workers_on_farms + self.workers_on_lumber_yards + self.workers_on_stone_quarries
     }
 
     /// Distribute settlers to production buildings.
@@ -176,7 +188,7 @@ impl Colony {
     /// 2. Fill farm slots up to `farms × farm_max_workers`
     /// 3. Spend remainder on lumber, then quarries
     ///
-    /// Does not log — [`Game::refresh_worker_assignments`] handles logging.
+    /// Does not log — caller logs when needed.
     fn auto_assign_workers(&mut self, balance: &Balance) {
         let mut available = self
             .population
@@ -197,6 +209,66 @@ impl Colony {
     /// `min(available settlers, open slots)` — never over-assign.
     fn assign_up_to(available: usize, slots: usize) -> usize {
         available.min(slots)
+    }
+
+    /// Set how many settlers work at one production type (`w farm 2` etc.).
+    ///
+    /// `count` is the **total** for that type, not a delta. Use `0` to unassign everyone there.
+    pub fn set_workers(
+        &mut self,
+        site: WorkerSite,
+        count: usize,
+        balance: &Balance,
+    ) -> Result<(), &'static str> {
+        let max = match site {
+            WorkerSite::Farm => self.workers_needed_for_farms(balance),
+            WorkerSite::Lumber => self.workers_needed_for_lumber_yards(balance),
+            WorkerSite::Quarry => self.workers_needed_for_stone_quarries(balance),
+        };
+
+        if count > max {
+            return Err("Too many workers for that building type.");
+        }
+
+        let (farms, lumber, quarries) = match site {
+            WorkerSite::Farm => (count, self.workers_on_lumber_yards, self.workers_on_stone_quarries),
+            WorkerSite::Lumber => (self.workers_on_farms, count, self.workers_on_stone_quarries),
+            WorkerSite::Quarry => (self.workers_on_farms, self.workers_on_lumber_yards, count),
+        };
+
+        if farms + lumber + quarries > self.population {
+            return Err("Not enough settlers — lower another assignment or grow population.");
+        }
+
+        self.workers_on_farms = farms;
+        self.workers_on_lumber_yards = lumber;
+        self.workers_on_stone_quarries = quarries;
+        Ok(())
+    }
+
+    /// Shrink assignments when buildings are lost or population drops.
+    pub fn clamp_workers(&mut self, balance: &Balance) {
+        self.workers_on_farms = self
+            .workers_on_farms
+            .min(self.workers_needed_for_farms(balance));
+        self.workers_on_lumber_yards = self
+            .workers_on_lumber_yards
+            .min(self.workers_needed_for_lumber_yards(balance));
+        self.workers_on_stone_quarries = self
+            .workers_on_stone_quarries
+            .min(self.workers_needed_for_stone_quarries(balance));
+
+        while self.assigned_workers() > self.population {
+            if self.workers_on_stone_quarries > 0 {
+                self.workers_on_stone_quarries -= 1;
+            } else if self.workers_on_lumber_yards > 0 {
+                self.workers_on_lumber_yards -= 1;
+            } else if self.workers_on_farms > 0 {
+                self.workers_on_farms -= 1;
+            } else {
+                break;
+            }
+        }
     }
 
     /// Warnings when buildings exist but cannot run (not enough assigned workers).
@@ -251,7 +323,7 @@ impl Colony {
         if free == 0 {
             return 0;
         }
-        yield_from_pop(balance.gather_wood_base, free, 40, 1)
+        yield_from_pop(balance.gather_wood_base, free, 40)
     }
 
     /// Expected stone from `g stone`. Uses 33% per free settler.
@@ -260,7 +332,7 @@ impl Colony {
         if free == 0 {
             return 0;
         }
-        yield_from_pop(balance.gather_stone_base, free, 33, 1)
+        yield_from_pop(balance.gather_stone_base, free, 33)
     }
 
     /// Expected food from `g food`. Uses 50% per free settler.
@@ -269,7 +341,7 @@ impl Colony {
         if free == 0 {
             return 0;
         }
-        yield_from_pop(balance.gather_food_base, free, 50, 1)
+        yield_from_pop(balance.gather_food_base, free, 50)
     }
 
     pub fn gather_wood(&mut self, balance: &Balance) -> Result<usize, &'static str> {
@@ -453,7 +525,7 @@ impl Default for Colony {
             name: "Default colony".to_string(),
             wood: 50,
             stone: 30,
-            food: 25,
+            food: 20,
             population: 5,
             max_population: 5,
             max_food: 25,
@@ -580,40 +652,42 @@ pub struct Game {
 }
 
 impl Game {
-    /// Re-run [`Colony::auto_assign_workers`] and write logs when assignment changes.
-    ///
-    /// `log_if_understaffed`: also log idle buildings (e.g. right after `b farm` when
-    /// there are not enough settlers to staff everything).
-    fn refresh_worker_assignments(&mut self, log_if_understaffed: bool) {
-        let farms_before = self.colony.workers_on_farms;
-        let lumber_before = self.colony.workers_on_lumber_yards;
-        let quarries_before = self.colony.workers_on_stone_quarries;
+    fn log_worker_assignment(&mut self) {
+        self.logs(format!(
+            "Workers: farms {}, lumber {}, quarries {} ({} free for gathering)",
+            self.colony.workers_on_farms,
+            self.colony.workers_on_lumber_yards,
+            self.colony.workers_on_stone_quarries,
+            self.colony.free_workers(),
+        ));
+    }
 
+    /// One-shot auto-assign (`w auto` only). Logs result and understaffing.
+    fn run_auto_assign_workers(&mut self) {
         self.colony.auto_assign_workers(&self.balance);
-
-        let changed = farms_before != self.colony.workers_on_farms
-            || lumber_before != self.colony.workers_on_lumber_yards
-            || quarries_before != self.colony.workers_on_stone_quarries;
-
-        if changed {
-            self.logs(format!(
-                "Workers: farms {}, lumber {}, quarries {} ({} free for gathering)",
-                self.colony.workers_on_farms,
-                self.colony.workers_on_lumber_yards,
-                self.colony.workers_on_stone_quarries,
-                self.colony.free_workers(),
-            ));
-        }
-
-        if changed || log_if_understaffed {
-            for msg in self.colony.understaffed_messages(&self.balance) {
-                self.logs(msg);
-            }
+        self.log_worker_assignment();
+        for msg in self.colony.understaffed_messages(&self.balance) {
+            self.logs(msg);
         }
     }
 
-    /// Farm, lumber yard, and quarry add worker slots — worth logging understaffing after build.
-    fn should_refresh_workers_with_understaffed_log(command: &Commands) -> bool {
+    fn clamp_workers_after_build_change(&mut self) {
+        self.colony.clamp_workers(&self.balance);
+        for msg in self.colony.understaffed_messages(&self.balance) {
+            self.logs(msg);
+        }
+    }
+
+    fn worker_site_label(site: WorkerSite) -> &'static str {
+        match site {
+            WorkerSite::Farm => "farm",
+            WorkerSite::Lumber => "lumber",
+            WorkerSite::Quarry => "quarry",
+        }
+    }
+
+    /// Production build/demolish may require trimming worker counts.
+    fn should_clamp_workers_after_command(command: &Commands) -> bool {
         matches!(
             command,
             Commands::BuildLumberYard
@@ -627,19 +701,19 @@ impl Game {
 
     /// End-of-day simulation. Order matters:
     ///
-    /// 1. Check lose/win by population / day 365
+    /// 1. Check lose/win by population / day [`WIN_DAY`]
     /// 2. Food upkeep (1 per settler) or starvation (−1 pop)
     /// 3. Random birth if food and housing allow
     /// 4. Spoil food above `max_food`
-    /// 5. Auto-assign workers → passive income from staffed buildings
+    /// 5. Clamp worker counts if pop/buildings changed → passive income
     /// 6. Advance day counter
     pub fn tick(&mut self) {
         // --- Lose / win ---
         if self.colony.population == 0 {
             println!("Gameover. Colony is dead.");
             self.gameover = true;
-        } else if self.world.days == 365 {
-            println!("Gameover. Colony reached 365 days.");
+        } else if self.world.days >= WIN_DAY {
+            println!("Victory! Colony survived {WIN_DAY} days.");
             self.gameover = true;
         }
 
@@ -684,8 +758,8 @@ impl Game {
             ));
         }
 
-        // --- Workers + passive payout (after pop may have changed) ---
-        self.refresh_worker_assignments(false);
+        // --- Clamp workers if pop dropped, then passive payout ---
+        self.colony.clamp_workers(&self.balance);
 
         self.colony.apply_passive_income(&self.balance);
 
@@ -696,7 +770,7 @@ impl Game {
     ///
     /// Gather/build errors are logged but do not skip the upcoming `tick`.
     pub fn process_command(&mut self, command: Commands) {
-        let log_understaffed = Self::should_refresh_workers_with_understaffed_log(&command);
+        let clamp_after = Self::should_clamp_workers_after_command(&command);
 
         match command {
             Commands::GetWood => match self.colony.gather_wood(&self.balance) {
@@ -772,30 +846,53 @@ impl Game {
 
             Commands::DemolishFarm => match self.colony.demolish_farm() {
                 Ok(()) => self.logs(format!(
-                    "Farm demolished ({} remaining). Settlers reassigned.",
+                    "Farm demolished ({} remaining).",
                     self.colony.farms
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
             Commands::DemolishLumberYard => match self.colony.demolish_lumber_yard() {
                 Ok(()) => self.logs(format!(
-                    "Lumber yard demolished ({} remaining). Settlers reassigned.",
+                    "Lumber yard demolished ({} remaining).",
                     self.colony.lumber_yards
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
             Commands::DemolishStoneQuarry => match self.colony.demolish_stone_quarry() {
                 Ok(()) => self.logs(format!(
-                    "Stone quarry demolished ({} remaining). Settlers reassigned.",
+                    "Stone quarry demolished ({} remaining).",
                     self.colony.stone_quarries
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
 
+            Commands::SetWorkers { site, count } => {
+                match self.colony.set_workers(site, count, &self.balance) {
+                    Ok(()) => {
+                        self.logs(format!(
+                            "Set {} workers to {}.",
+                            Self::worker_site_label(site),
+                            count
+                        ));
+                        self.log_worker_assignment();
+                        for msg in self.colony.understaffed_messages(&self.balance) {
+                            self.logs(msg);
+                        }
+                    }
+                    Err(msg) => self.logs(msg.to_string()),
+                }
+            }
+            Commands::WorkersAuto => {
+                self.logs("Auto-assign (farm → lumber → quarry).".into());
+                self.run_auto_assign_workers();
+            }
+
             Commands::Quit => {}
         }
 
-        self.refresh_worker_assignments(log_understaffed);
+        if clamp_after {
+            self.clamp_workers_after_build_change();
+        }
     }
 
     /// Append a line to the event log. Drops oldest entries beyond [`MAX_LOG_SIZE`].
@@ -820,17 +917,9 @@ impl Default for Game {
     }
 }
 
-/// Active gather yield: `base + max(pop × percent/100, min_bonus)`.
-///
-/// `pop` is **free settlers**, not total colony population.
-///
-/// Percent per resource: wood 40%, stone 33%, food 50%.
-/// `min_bonus` guarantees at least +1 from pop when `pop > 0` (integer `%` can round down to 0).
-///
-/// Callers must pass `pop == 0` only when gather is blocked — otherwise UI would show a false yield.
-fn yield_from_pop(base: usize, pop: usize, percent: usize, min_bonus: usize) -> usize {
-    let bonus = (pop * percent / 100).max(min_bonus);
-    base + bonus
+/// Active gather yield: `base + free × percent / 100` (integer division).
+fn yield_from_pop(base: usize, pop: usize, percent: usize) -> usize {
+    base + pop * percent / 100
 }
 
 // =============================================================================
@@ -900,8 +989,8 @@ mod tests {
 
     #[test]
     fn test_yeild_from_pop() {
-        let result = yield_from_pop(5, 2, 40, 1);
-        assert_eq!(result, 6);
+        assert_eq!(yield_from_pop(5, 2, 40), 5);
+        assert_eq!(yield_from_pop(5, 5, 40), 7);
     }
 
     // --- auto_assign: no buildings ---
@@ -1078,7 +1167,7 @@ mod tests {
         assert_workers(&colony, &balance, 2, 0, 0, 3);
         assert_eq!(
             colony.wood_yield(&balance),
-            yield_from_pop(balance.gather_wood_base, 3, 40, 1)
+            yield_from_pop(balance.gather_wood_base, 3, 40)
         );
     }
 
@@ -1114,41 +1203,54 @@ mod tests {
         assert!(colony.understaffed_messages(&balance).is_empty());
     }
 
-    // --- Game integration: refresh_worker_assignments via tick / commands ---
+    // --- Game integration: tick clamps only, w auto assigns ---
 
     #[test]
-    fn game_build_farm_auto_assigns_workers() {
+    fn game_build_farm_does_not_auto_assign_workers() {
         let mut game = Game::default();
         game.colony.population = 5;
 
         game.process_command(Commands::BuildFarm);
+
+        assert_eq!(game.colony.workers_on_farms, 0);
+        assert_eq!(game.colony.free_workers(), 5);
+    }
+
+    #[test]
+    fn game_w_auto_assigns_workers() {
+        let mut game = Game::default();
+        game.colony.population = 5;
+
+        game.process_command(Commands::BuildFarm);
+        game.process_command(Commands::WorkersAuto);
 
         assert_eq!(game.colony.workers_on_farms, 2);
         assert_eq!(game.colony.free_workers(), 3);
     }
 
     #[test]
-    fn game_build_production_logs_worker_assignment() {
+    fn game_w_auto_logs_assignment() {
         let mut game = Game::default();
         game.colony.population = 5;
         game.colony.stone = 100;
 
         game.process_command(Commands::BuildLumberYard);
+        game.process_command(Commands::WorkersAuto);
 
         assert!(
             game.logs.iter().any(|log| log.contains("Workers:")),
-            "expected worker log after building lumber yard, got: {:?}",
+            "expected worker log after w auto, got: {:?}",
             game.logs
         );
     }
 
     #[test]
-    fn game_tick_reassigns_workers_after_starvation() {
+    fn game_tick_clamps_workers_after_starvation() {
         let mut game = Game::default();
         game.colony.population = 4;
         game.colony.farms = 2;
         game.colony.food = 0;
-        game.colony.workers_on_farms = 0;
+        game.colony.workers_on_farms = 4;
 
         game.tick();
 
@@ -1159,20 +1261,16 @@ mod tests {
     }
 
     #[test]
-    fn game_tick_does_not_duplicate_worker_log_when_unchanged() {
+    fn game_tick_does_not_auto_assign_workers() {
         let mut game = Game::default();
         game.colony.population = 5;
+        game.colony.farms = 1;
         game.colony.food = 100;
-        assign(&mut game.colony, &game.balance);
-        let logs_before = game.logs.len();
 
         game.tick();
 
-        let new_worker_logs = game.logs[logs_before..]
-            .iter()
-            .filter(|log| log.contains("Workers:"))
-            .count();
-        assert_eq!(new_worker_logs, 0);
+        assert_eq!(game.colony.workers_on_farms, 0);
+        assert_eq!(game.colony.free_workers(), 5);
     }
 
     #[test]
@@ -1213,6 +1311,86 @@ mod tests {
         assert_eq!(game.colony.free_workers(), 2);
         assert!(
             game.logs.iter().any(|log| log.contains("Farm demolished")),
+            "got: {:?}",
+            game.logs
+        );
+    }
+
+    #[test]
+    fn manual_assign_frees_settlers_without_demolish() {
+        let balance = balance();
+        let mut colony = colony(4, 2, 0, 0);
+        assign(&mut colony, &balance);
+        assert_eq!(colony.free_workers(), 0);
+
+        colony.set_workers(WorkerSite::Farm, 0, &balance).unwrap();
+
+        assert_eq!(colony.workers_on_farms, 0);
+        assert_eq!(colony.free_workers(), 4);
+        assert!(colony.gather_wood(&balance).is_ok());
+    }
+
+    #[test]
+    fn manual_assign_rejects_too_many_workers() {
+        let balance = balance();
+        let mut colony = colony(4, 2, 0, 0);
+        assert!(colony.set_workers(WorkerSite::Farm, 5, &balance).is_err());
+    }
+
+    #[test]
+    fn w_auto_fills_workers_once() {
+        let balance = balance();
+        let mut colony = colony(5, 1, 1, 0);
+        colony.set_workers(WorkerSite::Farm, 0, &balance).unwrap();
+        colony.set_workers(WorkerSite::Lumber, 0, &balance).unwrap();
+        colony.auto_assign_workers(&balance);
+
+        assert_eq!(colony.workers_on_farms, 2);
+        assert_eq!(colony.workers_on_lumber_yards, 2);
+        assert_eq!(colony.free_workers(), 1);
+    }
+
+    #[test]
+    fn workers_assignment_persists_through_tick() {
+        let mut game = Game::default();
+        game.colony.population = 4;
+        game.colony.max_population = 4;
+        game.colony.farms = 2;
+        game.colony.set_workers(WorkerSite::Farm, 2, &game.balance).unwrap();
+        game.colony.food = 100;
+
+        game.tick();
+
+        assert_eq!(game.colony.workers_on_farms, 2);
+        assert_eq!(game.colony.free_workers(), 2);
+    }
+
+    #[test]
+    fn worker_commands_are_free_actions() {
+        assert!(Commands::WorkersAuto.is_worker_management());
+        assert!(Commands::SetWorkers {
+            site: WorkerSite::Farm,
+            count: 0
+        }
+        .is_worker_management());
+        assert!(!Commands::GetWood.is_worker_management());
+    }
+
+    #[test]
+    fn game_w_command_frees_gathering() {
+        let mut game = Game::default();
+        game.colony.population = 4;
+        game.colony.farms = 2;
+        assign(&mut game.colony, &game.balance);
+
+        game.process_command(Commands::SetWorkers {
+            site: WorkerSite::Farm,
+            count: 0,
+        });
+
+        assert_eq!(game.colony.free_workers(), 4);
+        assert!(
+            game.logs.iter().any(|log| log.contains("Set farm workers")),
             "got: {:?}",
             game.logs
         );

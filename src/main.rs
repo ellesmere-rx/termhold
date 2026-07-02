@@ -13,16 +13,24 @@ fn main() {
                 if cmd == game::Commands::Quit {
                     break;
                 }
+                let is_worker = cmd.is_worker_management();
                 game.process_command(cmd);
+                if !is_worker {
+                    game.tick();
+                }
+            }
+            ui::CommandInput::Help => {
+                ui::show_help(&game);
             }
             ui::CommandInput::Invalid => {
                 game.logs(ui::INVALID_COMMAND_MSG.into());
+                game.tick();
             }
             ui::CommandInput::Empty => {
                 game.logs(ui::EMPTY_COMMAND_MSG.into());
+                game.tick();
             }
         }
-        game.tick();
     }
 
     println!("[ End ]");
