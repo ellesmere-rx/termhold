@@ -1,71 +1,204 @@
-# Termhold - simple cli game about colony management
+# Termhold
+
+A simple CLI colony management game written in Rust.
+
+Manage resources, expand your settlement, assign workers and survive as long as possible.
 
 ---
 
-## Implemented mechanics:
+# Implemented Mechanics
 
-*Resources*:
-- Wood / Stone - basic resources for building 
+## Resources
 
-Needed for upgrading your colony and building new structures.
+- **Wood** — primary construction resource.
+- **Stone** — primary construction resource.
+- **Food** — required for survival and population growth.
+- **Population** — provides workforce and determines colony expansion.
 
-- Food - basic resource for survival
+Population growth depends on available food and a random birth chance.
+Building additional **Huts** increases the maximum population.
 
-Needed for survival and population growth.
+## Buildings
 
-- Population 
-
-Needed for population growth and colony expansion. Population growth is calculated from the amount of stored food and is random.
-Additional HUTS are needed to increase max popultion.
-
-*Buildings*:
-
-- [x] HUT - increases max population
-- [x] LUMBER YARD - increases passive wood production by workers
-- [x] STONE QUARRY - increases passive stone production by workers
-- [x] FARM - increases passive food production by workers
-- [x] BARN - increases food storage cap 
+- [x] **Hut** — increases maximum population
+- [x] **Lumber Yard** — passive wood production
+- [x] **Stone Quarry** — passive stone production
+- [x] **Farm** — passive food production
+- [x] **Barn** — increases food storage capacity
 
 ---
 
-## QUESTIONABLE MECHANICS OR CHEESE:
+# Mechanics Under Review
 
-- ~~[x] Spam passive buildings (no workers system or per capita)~~
-- [ ] Settlers instantly dying from starvation one by one 
+- [ ] Starvation (currently settlers die instantly one by one)
 
-## ROADMAP:
+---
+
+# Roadmap
+
+## Gameplay
+
+### Core Gameplay
 
 - [x] Population growth
-- [ ] Seasons
+- [x] Worker management
+- [x] Active gathering
+  - [x] Wood
+  - [x] Stone
+  - [x] Food
+- [x] Passive production
+
+### Next Features
+
 - [ ] Random events
-- [ ] Endgame Conditions
-- [x] Simple workers system
-- [x] Active gathering by hand
-    - [x] Wood - base + pop * 40%
-    - [x] Food - base + pop * 50%
-    - [x] Stone - base + pop * 33%
-- [x] Passive gathering by buildings
-- [ ] Module refactoring
-    - [ ] Methods refactoring
-    - [ ] Commands -> Actions
-
-## FUTURE IDEAS:
-
+- [ ] Endgame conditions
+- [ ] Improved starvation mechanics
 - [ ] Unique villagers
-- [ ] Researchings
-- [ ] Map
-- [ ] Tradesystem
-    - [ ] More complex goods (i.e. stone tools, higher quality food)
-    - [ ] Market prices based on season, random events
-- [ ] AI
-- [ ] Multiplayer
-- [ ] 2D/3D graphics
-- [ ] Sounds
-- [ ] Races 
-- [ ] Hapiness
-- [ ] Combat system
+- [ ] Research system
+- [ ] Happiness
+- [ ] Combat
 - [ ] Storyline
 
-## KNOWN BUGS:
+### World Simulation
 
-- ~~[x] Food from farms doesn't spoils~~
+- [ ] Seasons
+- [ ] Weather
+- [ ] Difficulty presets
+- [ ] World map
+
+### Economy
+
+- [ ] Trading system
+- [ ] Advanced resources
+  - [ ] Stone tools
+  - [ ] Processed food
+  - [ ] Production chains
+- [ ] Dynamic market prices
+
+---
+
+# Architecture Roadmap
+
+## Core Data Model
+
+- [ ] Replace `WorkerSite` with a shared `BuildingKind`
+- [ ] Introduce `ResourceKind`
+- [ ] Replace building counters with `Building`
+- [ ] Replace `Vec<String>` with structured `LogEntry`
+- [ ] Expand `World`
+  - [ ] Seasons
+  - [ ] Weather
+  - [ ] Difficulty
+  - [ ] Game speed
+
+## Configuration
+
+- [ ] Split `Balance` into nested structures
+
+```text
+Balance
+├── GatherBalance
+├── PopulationBalance
+├── BuildingBalance
+└── StorageBalance
+```
+
+## Commands & Actions
+
+Replace specialized commands
+
+```rust
+BuildFarm
+BuildBarn
+BuildQuarry
+...
+```
+
+with generic actions
+
+```rust
+Command::Build(BuildingKind)
+Command::Demolish(BuildingKind)
+Command::Gather(ResourceKind)
+```
+
+## Game Systems
+
+Split game logic into independent systems.
+
+- [ ] Production
+- [ ] Population
+- [ ] Workers
+- [ ] Economy
+- [ ] Storage
+- [ ] Events
+
+### Target architecture
+
+```text
+Game::tick()
+    ↓
+Production
+    ↓
+Population
+    ↓
+Storage
+    ↓
+Events
+    ↓
+World
+```
+
+## Engine
+
+- [ ] Keep the game logic completely UI-independent
+- [ ] Support multiple frontends
+  - CLI
+  - Ratatui
+  - GUI (future)
+- [ ] Replace direct UI interaction with `GameEvent`
+- [ ] Separate input handling from game simulation
+
+---
+
+# Development Principles
+
+- Keep game logic independent from the user interface.
+- Prefer data-driven balancing through `Balance`.
+- Avoid God Objects by splitting logic into independent systems.
+- Prefer generic enums (`BuildingKind`, `ResourceKind`) over duplicated types.
+- Keep simulation deterministic where possible.
+- Separate **input → simulation → rendering**.
+
+---
+
+# Design Philosophy
+
+**Termhold** focuses on **strategic colony management**, not individual settler simulation.
+
+If a world map is introduced, it will primarily provide **spatial strategy** rather than micromanagement.
+
+The map is intended to answer questions such as:
+
+- Where should buildings be placed?
+- Which terrain is best for production?
+- How should the colony expand?
+
+rather than simulate every settler's movement or daily routine.
+
+**Termhold** focuses on strategic colony management with narrative-driven progression.
+
+The colony evolves not only through economic decisions, but also through story events, difficult choices and long-term consequences.
+
+# Long-Term Ideas
+
+- [ ] AI-controlled colonies
+- [ ] Diplomacy
+- [ ] Multiple races
+- [ ] Procedural world generation
+- [ ] Save / Load system
+- [ ] Mod support
+- [ ] Ratatui interface
+- [ ] Graphical (2D/3D) client
+- [ ] Audio
+- [ ] Multiplayer
