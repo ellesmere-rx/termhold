@@ -46,6 +46,8 @@ Additional HUTS are needed to increase max popultion.
     - [x] Stone - base + pop * 33%
 - [x] Passive gathering by buildings
 - [ ] Module refactoring
+    - [ ] Methods refactoring
+    - [ ] Commands -> Actions
 
 ## FUTURE IDEAS:
 
