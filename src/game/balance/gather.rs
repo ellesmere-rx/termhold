@@ -1,14 +1,19 @@
+//! Active gathering balance (base yields before free-settler bonus).
+
 use crate::game::ResourceKind;
 
+/// Base gather amounts before [`ResourceKind::gather_percent`] scaling.
 pub struct GatherBalance {
-    // --- Active gathering ---
-    /// Base resources before free-settler bonus.
+    /// Wood from `g wood` with one free settler (before percent bonus).
     pub gather_wood_base: usize,
+    /// Stone from `g stone`.
     pub gather_stone_base: usize,
+    /// Food from `g food`.
     pub gather_food_base: usize,
 }
 
 impl GatherBalance {
+    /// Base yield for `kind` (see field docs above).
     pub fn base(&self, kind: ResourceKind) -> usize {
         match kind {
             ResourceKind::Wood => self.gather_wood_base,

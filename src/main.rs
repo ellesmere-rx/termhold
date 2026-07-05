@@ -8,25 +8,25 @@ fn main() {
 
     while !game.gameover {
         ui::render(&game);
-        match ui::read_command() {
-            ui::CommandInput::Command(cmd) => {
-                if cmd == game::Commands::Quit {
+        match ui::read_action() {
+            ui::ActionInput::Action(action) => {
+                if action == game::Actions::Quit {
                     break;
                 }
-                let is_worker = cmd.is_worker_management();
-                game.process_command(cmd);
+                let is_worker = action.is_worker_management();
+                game.process_action(action);
                 if !is_worker {
                     game.tick();
                 }
             }
-            ui::CommandInput::Help => {
+            ui::ActionInput::Help => {
                 ui::show_help(&game);
             }
-            ui::CommandInput::Invalid => {
+            ui::ActionInput::Invalid => {
                 game.logs(ui::INVALID_COMMAND_MSG.into());
                 game.tick();
             }
-            ui::CommandInput::Empty => {
+            ui::ActionInput::Empty => {
                 game.logs(ui::EMPTY_COMMAND_MSG.into());
                 game.tick();
             }

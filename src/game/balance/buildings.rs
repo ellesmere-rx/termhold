@@ -1,5 +1,12 @@
+//! Build costs, worker slots per instance, and passive output rates.
+
+/// Tunable constants for all building types.
+///
+/// Worker fields (`*_max_workers`) define how many settlers one instance needs
+/// to be considered staffed; logic reads them via [`BuildingKind::workers_required`].
 pub struct BuildingsBalance {
     // --- Hut (housing) ---
+    /// Population cap added per hut built.
     pub hut_max_population_increase: usize,
     pub build_hut_wood_cost: usize,
     pub build_hut_stone_cost: usize,
@@ -25,6 +32,7 @@ pub struct BuildingsBalance {
     pub farm_max_workers: usize,
 
     // --- Barn (storage) ---
+    /// Food storage cap added per barn built.
     pub barn_max_food_storage_increase: usize,
     pub build_barn_wood_cost: usize,
     pub build_barn_stone_cost: usize,

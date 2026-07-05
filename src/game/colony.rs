@@ -1,242 +1,151 @@
-/// All mutable colony state: resources, caps, building counts, worker assignments.
-///
-/// Worker fields (`workers_on_*`) hold the current assignment (manual or from auto-assign).
-use super::balance::Balance;
-use super::commands::WorkerSite;
+//! Colony state: resources, population, buildings, and all player-facing rules.
+//!
+//! [`Colony`] is the domain model. UI parses input into [`Actions`](super::Actions);
+//! [`Game`](super::Game) applies actions and runs the daily tick.
+
 use super::ResourceKind;
+use super::balance::Balance;
+use super::building::{BuildingKind, BuildingList};
 
+/// The player's settlement: inventory, population caps, and building instances.
 pub struct Colony {
+    /// Display name (UI / logs).
     pub name: String,
-
-    // --- Resources (current amounts) ---
+    /// Current wood stockpile.
     pub wood: usize,
+    /// Current stone stockpile.
     pub stone: usize,
+    /// Current food in storage (subject to [`Self::max_food`] and daily consumption).
     pub food: usize,
-
-    // --- Population ---
-    /// Living settlers. Each eats 1 food per day in [`Game::tick`].
+    /// Living settlers. Each assigned worker counts against this; gather uses the rest.
     pub population: usize,
-    /// Raised by huts. Births only happen below this cap.
+    /// Housing cap; increased by huts.
     pub max_population: usize,
-
-    // --- Food storage ---
-    /// Current food cannot exceed this after spoilage at end of tick.
+    /// Food storage cap; increased by barns. Excess food spoils at end of tick.
     pub max_food: usize,
-
-    // --- Buildings (counts only; no per-building IDs yet) ---
-    pub huts: usize,
-    pub barns: usize,
-    pub lumber_yards: usize,
-    pub stone_quarries: usize,
-    pub farms: usize,
-
-    // --- Workers (auto-assigned each tick / after production builds) ---
-    pub workers_on_lumber_yards: usize,
-    pub workers_on_stone_quarries: usize,
-    pub workers_on_farms: usize,
+    /// All built structures and their per-instance worker assignments.
+    pub buildings: BuildingList,
 }
 
 impl Colony {
-    // -------------------------------------------------------------------------
-    // Worker math: slots, staffed buildings, free settlers
-    // -------------------------------------------------------------------------
-
-    /// Total worker slots across all lumber yards (each yard needs `lumber_yard_max_workers`).
-    pub fn workers_needed_for_lumber_yards(&self, balance: &Balance) -> usize {
-        self.lumber_yards * balance.buildings.lumber_yard_max_workers
+    /// Built instances of `kind`.
+    pub fn count(&self, kind: BuildingKind) -> usize {
+        self.buildings.count(kind)
     }
 
-    /// Total worker slots across all stone quarries.
-    pub fn workers_needed_for_stone_quarries(&self, balance: &Balance) -> usize {
-        self.stone_quarries * balance.buildings.stone_quarry_max_workers
+    /// Total settlers assigned to all instances of `kind`.
+    pub fn workers_on(&self, kind: BuildingKind) -> usize {
+        self.buildings.workers_on(kind)
     }
 
-    /// Total worker slots across all farms.
-    pub fn workers_needed_for_farms(&self, balance: &Balance) -> usize {
-        self.farms * balance.buildings.farm_max_workers
+    /// Maximum workers assignable to `kind` (sum of slots on all instances).
+    pub fn workers_needed(&self, kind: BuildingKind, balance: &Balance) -> usize {
+        self.buildings.workers_needed(kind, &balance.buildings)
     }
 
-    /// How many lumber yards have a **full** crew.
-    ///
-    /// Uses integer division: 3 workers with 2 per yard → 1 staffed yard (the 3rd worker
-    /// is assigned but cannot complete a second yard — "all or nothing" per building).
-    pub fn staffed_lumber_yards(&self, balance: &Balance) -> usize {
-        self.workers_on_lumber_yards / balance.buildings.lumber_yard_max_workers
+    /// How many instances of `kind` are fully staffed and producing.
+    pub fn staffed(&self, kind: BuildingKind, balance: &Balance) -> usize {
+        self.buildings.staffed(kind, &balance.buildings)
     }
 
-    /// Fully staffed quarries (same division rule as lumber).
-    pub fn staffed_stone_quarries(&self, balance: &Balance) -> usize {
-        self.workers_on_stone_quarries / balance.buildings.stone_quarry_max_workers
-    }
-
-    /// Fully staffed farms.
-    pub fn staffed_farms(&self, balance: &Balance) -> usize {
-        self.workers_on_farms / balance.buildings.farm_max_workers
-    }
-
-    /// Settlers not assigned to production — only these count for `g *` yield.
+    /// Settlers not assigned to any building — only these can [`Self::gather`].
     pub fn free_workers(&self) -> usize {
-        let assigned =
-            self.workers_on_lumber_yards + self.workers_on_stone_quarries + self.workers_on_farms;
-        self.population.saturating_sub(assigned)
+        self.population
+            .saturating_sub(self.buildings.total_assigned())
     }
 
-    /// Total settlers currently working at production buildings.
+    /// Total settlers assigned across all buildings.
     pub fn assigned_workers(&self) -> usize {
-        self.workers_on_farms + self.workers_on_lumber_yards + self.workers_on_stone_quarries
+        self.buildings.total_assigned()
     }
 
-    /// Distribute settlers to production buildings.
+    /// `w auto`: fill production buildings from available settlers.
     ///
-    /// Algorithm:
-    /// 1. `available = population - reserve_free_settlers`
-    /// 2. Fill farm slots up to `farms × farm_max_workers`
-    /// 3. Spend remainder on lumber, then quarries
-    ///
-    /// Does not log — caller logs when needed.
+    /// Respects [`PopulationBalance::reserve_free_settlers`](super::balance::PopulationBalance::reserve_free_settlers)
+    /// so some settlers may stay free for gathering.
     pub(crate) fn auto_assign_workers(&mut self, balance: &Balance) {
-        let mut available = self
+        let available = self
             .population
             .saturating_sub(balance.population.reserve_free_settlers);
-
-        let farm_slots = self.workers_needed_for_farms(balance);
-        self.workers_on_farms = Self::assign_up_to(available, farm_slots);
-        available -= self.workers_on_farms;
-
-        let lumber_slots = self.workers_needed_for_lumber_yards(balance);
-        self.workers_on_lumber_yards = Self::assign_up_to(available, lumber_slots);
-        available -= self.workers_on_lumber_yards;
-
-        let quarry_slots = self.workers_needed_for_stone_quarries(balance);
-        self.workers_on_stone_quarries = Self::assign_up_to(available, quarry_slots);
+        self.buildings.auto_assign(available, &balance.buildings);
     }
 
-    /// `min(available settlers, open slots)` — never over-assign.
-    fn assign_up_to(available: usize, slots: usize) -> usize {
-        available.min(slots)
-    }
-
-    /// Set how many settlers work at one production type (`w farm 2` etc.).
+    /// `w <kind> <count>`: set total workers on a production type.
     ///
-    /// `count` is the **total** for that type, not a delta. Use `0` to unassign everyone there.
+    /// Validates against slot capacity and total population (including other kinds).
+    /// Distributes across instances via [`BuildingList::set_workers_on_kind`].
     pub fn set_workers(
         &mut self,
-        site: WorkerSite,
+        kind: BuildingKind,
         count: usize,
         balance: &Balance,
     ) -> Result<(), &'static str> {
-        let max = match site {
-            WorkerSite::Farm => self.workers_needed_for_farms(balance),
-            WorkerSite::Lumber => self.workers_needed_for_lumber_yards(balance),
-            WorkerSite::Quarry => self.workers_needed_for_stone_quarries(balance),
-        };
+        if !kind.employs_workers() {
+            return Err("That building does not use workers.");
+        }
 
+        let max = self.workers_needed(kind, balance);
         if count > max {
             return Err("Too many workers for that building type.");
         }
 
-        let (farms, lumber, quarries) = match site {
-            WorkerSite::Farm => (
-                count,
-                self.workers_on_lumber_yards,
-                self.workers_on_stone_quarries,
-            ),
-            WorkerSite::Lumber => (self.workers_on_farms, count, self.workers_on_stone_quarries),
-            WorkerSite::Quarry => (self.workers_on_farms, self.workers_on_lumber_yards, count),
-        };
-
-        if farms + lumber + quarries > self.population {
+        let other: usize = BuildingKind::PRODUCTION
+            .iter()
+            .filter(|k| **k != kind)
+            .map(|k| self.workers_on(*k))
+            .sum();
+        if other + count > self.population {
             return Err("Not enough settlers — lower another assignment or grow population.");
         }
 
-        self.workers_on_farms = farms;
-        self.workers_on_lumber_yards = lumber;
-        self.workers_on_stone_quarries = quarries;
+        self.buildings
+            .set_workers_on_kind(kind, count, &balance.buildings);
         Ok(())
     }
 
-    /// Shrink assignments when buildings are lost or population drops.
+    /// Trim invalid assignments after population drop or new production building.
     pub fn clamp_workers(&mut self, balance: &Balance) {
-        self.workers_on_farms = self
-            .workers_on_farms
-            .min(self.workers_needed_for_farms(balance));
-        self.workers_on_lumber_yards = self
-            .workers_on_lumber_yards
-            .min(self.workers_needed_for_lumber_yards(balance));
-        self.workers_on_stone_quarries = self
-            .workers_on_stone_quarries
-            .min(self.workers_needed_for_stone_quarries(balance));
-
-        while self.assigned_workers() > self.population {
-            if self.workers_on_stone_quarries > 0 {
-                self.workers_on_stone_quarries -= 1;
-            } else if self.workers_on_lumber_yards > 0 {
-                self.workers_on_lumber_yards -= 1;
-            } else if self.workers_on_farms > 0 {
-                self.workers_on_farms -= 1;
-            } else {
-                break;
-            }
-        }
+        self.buildings
+            .clamp_workers(&balance.buildings, self.population);
     }
 
-    /// Warnings when buildings exist but cannot run (not enough assigned workers).
-    /// Used in logs after assignment changes or when building a production structure.
+    /// Human-readable warnings for production buildings that are built but not fully staffed.
     pub fn understaffed_messages(&self, balance: &Balance) -> Vec<String> {
         let mut messages = Vec::new();
 
-        if self.farms > 0 && self.workers_on_farms < self.workers_needed_for_farms(balance) {
-            let idle = self.farms - self.staffed_farms(balance);
+        for kind in BuildingKind::PRODUCTION {
+            let total = self.count(kind);
+            if total == 0 {
+                continue;
+            }
+            let needed = self.workers_needed(kind, balance);
+            let assigned = self.workers_on(kind);
+            if assigned >= needed {
+                continue;
+            }
+            let idle = total - self.staffed(kind, balance);
+            let per_building = kind.workers_required(&balance.buildings);
+            let (name, unit) = match kind {
+                BuildingKind::Farm => ("farm", "farm"),
+                BuildingKind::LumberYard => ("lumber yard", "yard"),
+                BuildingKind::StoneQuarry => ("quarry", "quarry"),
+                _ => continue,
+            };
             messages.push(format!(
-                "{idle} farm(s) idle: {}/{} workers assigned (need {} per farm)",
-                self.workers_on_farms,
-                self.workers_needed_for_farms(balance),
-                balance.buildings.farm_max_workers
-            ));
-        }
-
-        if self.lumber_yards > 0
-            && self.workers_on_lumber_yards < self.workers_needed_for_lumber_yards(balance)
-        {
-            let idle = self.lumber_yards - self.staffed_lumber_yards(balance);
-            messages.push(format!(
-                "{idle} lumber yard(s) idle: {}/{} workers assigned (need {} per yard)",
-                self.workers_on_lumber_yards,
-                self.workers_needed_for_lumber_yards(balance),
-                balance.buildings.lumber_yard_max_workers
-            ));
-        }
-
-        if self.stone_quarries > 0
-            && self.workers_on_stone_quarries < self.workers_needed_for_stone_quarries(balance)
-        {
-            let idle = self.stone_quarries - self.staffed_stone_quarries(balance);
-            messages.push(format!(
-                "{idle} quarry/quarries idle: {}/{} workers assigned (need {} per quarry)",
-                self.workers_on_stone_quarries,
-                self.workers_needed_for_stone_quarries(balance),
-                balance.buildings.stone_quarry_max_workers
+                "{idle} {name}(s) idle: {assigned}/{needed} workers assigned (need {per_building} per {unit})"
             ));
         }
 
         messages
     }
 
-    // -------------------------------------------------------------------------
-    // Active gathering (`g wood` / `g stone` / `g food`)
-    // -------------------------------------------------------------------------
-
-    /// Expected gather yield for `kind` today (UI preview). Zero if no free settlers.
+    /// Expected gather yield for `kind` from current free settlers (does not mutate state).
     pub fn gather_yield(&self, kind: ResourceKind, balance: &Balance) -> usize {
         let free = self.free_workers();
         if free == 0 {
             return 0;
         }
-        Self::yield_from_pop(
-            balance.gather.base(kind),
-            free,
-            kind.gather_percent(),
-        )
+        Self::yield_from_pop(balance.gather.base(kind), free, kind.gather_percent())
     }
 
     pub fn wood_yield(&self, balance: &Balance) -> usize {
@@ -251,6 +160,7 @@ impl Colony {
         self.gather_yield(ResourceKind::Food, balance)
     }
 
+    /// Active gathering (`g wood`, etc.): uses free settlers only; advances day separately in UI.
     pub fn gather(&mut self, kind: ResourceKind, balance: &Balance) -> Result<usize, &'static str> {
         if self.free_workers() == 0 {
             return Err(
@@ -274,165 +184,80 @@ impl Colony {
         Ok(gather_yield)
     }
 
-    pub fn gather_wood(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        self.gather(ResourceKind::Wood, balance)
-    }
+    /// Construct one building: pay costs, add instance, apply hut/barn cap bonuses.
+    /// Does not auto-assign workers.
+    pub fn build(&mut self, kind: BuildingKind, balance: &Balance) -> Result<usize, &'static str> {
+        let wood_cost = kind.build_wood_cost(&balance.buildings);
+        let stone_cost = kind.build_stone_cost(&balance.buildings);
 
-    pub fn gather_stone(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        self.gather(ResourceKind::Stone, balance)
-    }
-
-    pub fn gather_food(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        self.gather(ResourceKind::Food, balance)
-    }
-
-    // -------------------------------------------------------------------------
-    // Construction (player spends resources; production buildings need workers later)
-    // -------------------------------------------------------------------------
-
-    /// +max population cap. Does not add settlers immediately — births fill huts over time.
-    pub fn build_hut(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        if self.wood < balance.buildings.build_hut_wood_cost {
-            return Err("Not enough wood to build a hut!");
+        if self.wood < wood_cost {
+            return Err("Not enough wood for this building!");
         }
-        if self.stone < balance.buildings.build_hut_stone_cost {
-            return Err("Not enough stone to build a hut!");
+        if self.stone < stone_cost {
+            return Err("Not enough stone for this building!");
         }
-        self.wood -= balance.buildings.build_hut_wood_cost;
-        self.stone -= balance.buildings.build_hut_stone_cost;
-        self.huts += 1;
-        self.max_population += balance.buildings.hut_max_population_increase;
+
+        self.wood -= wood_cost;
+        self.stone -= stone_cost;
+        self.buildings.add(kind);
+
+        match kind {
+            BuildingKind::Hut => {
+                self.max_population += balance.buildings.hut_max_population_increase;
+            }
+            BuildingKind::Barn => {
+                self.max_food += balance.buildings.barn_max_food_storage_increase;
+            }
+            _ => {}
+        }
+
         Ok(1)
     }
 
-    /// +food storage cap. Does not employ workers.
-    pub fn build_barn(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        if self.wood < balance.buildings.build_barn_wood_cost {
-            return Err("Not enough wood to build a barn!");
-        }
-        if self.stone < balance.buildings.build_barn_stone_cost {
-            return Err("Not enough stone to build a barn!");
-        }
-        self.wood -= balance.buildings.build_barn_wood_cost;
-        self.stone -= balance.buildings.build_barn_stone_cost;
-        self.barns += 1;
-        self.max_food += balance.buildings.barn_max_food_storage_increase;
-        Ok(1)
-    }
-
-    /// Adds a lumber yard. Passive wood only after auto-assign fills `lumber_yard_max_workers` per yard.
-    pub fn build_lumber_yard(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        if self.wood < balance.buildings.build_lumber_yard_wood_cost {
-            return Err("Not enough wood to build a lumber yard!");
-        }
-        if self.stone < balance.buildings.build_lumber_yard_stone_cost {
-            return Err("Not enough stone to build a lumber yard!");
-        }
-        self.wood -= balance.buildings.build_lumber_yard_wood_cost;
-        self.stone -= balance.buildings.build_lumber_yard_stone_cost;
-        self.lumber_yards += 1;
-        Ok(1)
-    }
-
-    /// Adds a stone quarry. Passive stone when fully staffed.
-    pub fn build_stone_quarry(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        if self.wood < balance.buildings.build_stone_quarry_wood_cost {
-            return Err("Not enough wood to build a stone quarry!");
-        }
-        if self.stone < balance.buildings.build_stone_quarry_stone_cost {
-            return Err("Not enough stone to build a stone quarry!");
-        }
-        self.wood -= balance.buildings.build_stone_quarry_wood_cost;
-        self.stone -= balance.buildings.build_stone_quarry_stone_cost;
-        self.stone_quarries += 1;
-        Ok(1)
-    }
-
-    /// Adds a farm. Passive food when fully staffed. Farms are filled first in auto-assign.
-    pub fn build_farm(&mut self, balance: &Balance) -> Result<usize, &'static str> {
-        if self.wood < balance.buildings.build_farm_wood_cost {
-            return Err("Not enough wood to build a farm!");
-        }
-        if self.stone < balance.buildings.build_farm_stone_cost {
-            return Err("Not enough stone to build a farm!");
-        }
-        self.wood -= balance.buildings.build_farm_wood_cost;
-        self.stone -= balance.buildings.build_farm_stone_cost;
-        self.farms += 1;
-        Ok(1)
-    }
-
-    // -------------------------------------------------------------------------
-    // Demolish (no resource refund; frees worker slots on next auto-assign)
-    // -------------------------------------------------------------------------
-
-    pub fn demolish_farm(&mut self) -> Result<(), &'static str> {
-        if self.farms == 0 {
-            return Err("No farms to demolish.");
-        }
-        self.farms -= 1;
-        Ok(())
-    }
-
-    pub fn demolish_lumber_yard(&mut self) -> Result<(), &'static str> {
-        if self.lumber_yards == 0 {
-            return Err("No lumber yards to demolish.");
-        }
-        self.lumber_yards -= 1;
-        Ok(())
-    }
-
-    pub fn demolish_stone_quarry(&mut self) -> Result<(), &'static str> {
-        if self.stone_quarries == 0 {
-            return Err("No stone quarries to demolish.");
-        }
-        self.stone_quarries -= 1;
-        Ok(())
-    }
-
-    // -------------------------------------------------------------------------
-    // Passive income (end of day, no action cost)
-    // -------------------------------------------------------------------------
-
-    /// Wood per tick from fully staffed lumber yards only.
+    /// Daily passive wood from fully staffed lumber yards.
     pub fn passive_wood(&self, balance: &Balance) -> usize {
-        self.staffed_lumber_yards(balance) * balance.buildings.lumber_yard_wood_production
+        self.staffed(BuildingKind::LumberYard, balance)
+            * BuildingKind::LumberYard.passive_output(&balance.buildings)
     }
 
-    /// Stone per tick from fully staffed quarries.
+    /// Daily passive stone from fully staffed quarries.
     pub fn passive_stone(&self, balance: &Balance) -> usize {
-        self.staffed_stone_quarries(balance) * balance.buildings.stone_quarry_stone_production
+        self.staffed(BuildingKind::StoneQuarry, balance)
+            * BuildingKind::StoneQuarry.passive_output(&balance.buildings)
     }
 
-    /// Food per tick from fully staffed farms.
+    /// Daily passive food from fully staffed farms.
     pub fn passive_food(&self, balance: &Balance) -> usize {
-        self.staffed_farms(balance) * balance.buildings.farm_food_production
+        self.staffed(BuildingKind::Farm, balance)
+            * BuildingKind::Farm.passive_output(&balance.buildings)
     }
 
-    /// Add passive resources to colony stockpiles.
-    ///
-    /// Food is clipped to `max_food` here; any overflow is handled by spoilage logic in `tick`.
-    pub fn apply_passive_income(&mut self, balance: &Balance) -> (usize, usize, usize) {
+    /// Apply end-of-day production; food gain is capped by remaining storage.
+    /// Returns `(wood, stone, food_added, food_lost)`.
+    pub fn apply_passive_income(&mut self, balance: &Balance) -> (usize, usize, usize, usize) {
         let wood = self.passive_wood(balance);
         let stone = self.passive_stone(balance);
 
         let food_gain = self.passive_food(balance);
         let food = food_gain.min(self.max_food.saturating_sub(self.food));
+        let food_lost = food_gain.saturating_sub(food);
         self.food += food;
         self.wood += wood;
         self.stone += stone;
-        (wood, stone, food)
+        (wood, stone, food, food_lost)
     }
 
-    /// Active gather yield: `base + free × percent / 100` (integer division).
+    /// Gather formula: `base + pop × percent / 100`.
     pub fn yield_from_pop(base: usize, pop: usize, percent: usize) -> usize {
         base + pop * percent / 100
     }
 }
 
 impl Default for Colony {
-    /// Starting colony: 5 settlers in 1 hut, modest resources, no production buildings.
     fn default() -> Self {
+        let mut buildings = BuildingList::default();
+        buildings.add(BuildingKind::Hut);
+
         Self {
             name: "Default colony".to_string(),
             wood: 50,
@@ -441,14 +266,7 @@ impl Default for Colony {
             population: 5,
             max_population: 5,
             max_food: 25,
-            huts: 1,
-            barns: 0,
-            lumber_yards: 0,
-            stone_quarries: 0,
-            farms: 0,
-            workers_on_lumber_yards: 0,
-            workers_on_stone_quarries: 0,
-            workers_on_farms: 0,
+            buildings,
         }
     }
 }

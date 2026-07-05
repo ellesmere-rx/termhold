@@ -1,3 +1,6 @@
+//! Population growth and worker auto-assign reserve.
+
+/// Birth rules and how many settlers `w auto` leaves free for gathering.
 pub struct PopulationBalance {
     /// Extra food required in storage to attempt birth: need `food >= pop + this`.
     pub increase_cost: usize,
