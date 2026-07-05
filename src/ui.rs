@@ -2,6 +2,7 @@ use std::io;
 
 use crate::game::Commands;
 use crate::game::Game;
+use crate::game::ResourceKind;
 
 const WIDTH: usize = 80;
 const VISIBLE_LOGS: usize = 10;
@@ -70,12 +71,7 @@ fn is_help_input(input: &str) -> bool {
 }
 
 fn parse_gather(target: &str) -> Option<Commands> {
-    match target {
-        "wood" => Some(Commands::GetWood),
-        "stone" => Some(Commands::GetStone),
-        "food" => Some(Commands::GetFood),
-        _ => None,
-    }
+    ResourceKind::parse(target).map(ResourceKind::to_gather_command)
 }
 
 fn parse_build(target: &str) -> Option<Commands> {
@@ -137,36 +133,36 @@ fn render_build_menu(balance: &crate::game::Balance) {
     section("BUILD");
     row("b hut", format!(
         "{}w {}s → +{} pop",
-        balance.build_hut_wood_cost,
-        balance.build_hut_stone_cost,
-        balance.hut_max_population_increase,
+        balance.buildings.build_hut_wood_cost,
+        balance.buildings.build_hut_stone_cost,
+        balance.buildings.hut_max_population_increase,
     ));
     row("b farm", format!(
         "{}w {}s → +{} food/d, {} workers",
-        balance.build_farm_wood_cost,
-        balance.build_farm_stone_cost,
-        balance.farm_food_production,
-        balance.farm_max_workers,
+        balance.buildings.build_farm_wood_cost,
+        balance.buildings.build_farm_stone_cost,
+        balance.buildings.farm_food_production,
+        balance.buildings.farm_max_workers,
     ));
     row("b lumber", format!(
         "{}w {}s → +{} wood/d, {} workers",
-        balance.build_lumber_yard_wood_cost,
-        balance.build_lumber_yard_stone_cost,
-        balance.lumber_yard_wood_production,
-        balance.lumber_yard_max_workers,
+        balance.buildings.build_lumber_yard_wood_cost,
+        balance.buildings.build_lumber_yard_stone_cost,
+        balance.buildings.lumber_yard_wood_production,
+        balance.buildings.lumber_yard_max_workers,
     ));
     row("b quarry", format!(
         "{}w {}s → +{} stone/d, {} workers",
-        balance.build_stone_quarry_wood_cost,
-        balance.build_stone_quarry_stone_cost,
-        balance.stone_quarry_stone_production,
-        balance.stone_quarry_max_workers,
+        balance.buildings.build_stone_quarry_wood_cost,
+        balance.buildings.build_stone_quarry_stone_cost,
+        balance.buildings.stone_quarry_stone_production,
+        balance.buildings.stone_quarry_max_workers,
     ));
     row("b barn", format!(
         "{}w {}s → +{} food cap",
-        balance.build_barn_wood_cost,
-        balance.build_barn_stone_cost,
-        balance.barn_max_food_storage_increase,
+        balance.buildings.build_barn_wood_cost,
+        balance.buildings.build_barn_stone_cost,
+        balance.buildings.barn_max_food_storage_increase,
     ));
     row("d", "farm / lumber / quarry — no refund");
     println!();
@@ -264,7 +260,7 @@ pub fn render(game: &Game) {
                 colony.workers_on_farms,
                 colony.workers_needed_for_farms(balance),
                 colony.staffed_farms(balance),
-                balance.farm_food_production * colony.staffed_farms(balance),
+                balance.buildings.farm_food_production * colony.staffed_farms(balance),
             ),
         );
     }
@@ -277,7 +273,7 @@ pub fn render(game: &Game) {
                 colony.workers_on_lumber_yards,
                 colony.workers_needed_for_lumber_yards(balance),
                 colony.staffed_lumber_yards(balance),
-                balance.lumber_yard_wood_production * colony.staffed_lumber_yards(balance),
+                balance.buildings.lumber_yard_wood_production * colony.staffed_lumber_yards(balance),
             ),
         );
     }
@@ -290,7 +286,7 @@ pub fn render(game: &Game) {
                 colony.workers_on_stone_quarries,
                 colony.workers_needed_for_stone_quarries(balance),
                 colony.staffed_stone_quarries(balance),
-                balance.stone_quarry_stone_production * colony.staffed_stone_quarries(balance),
+                balance.buildings.stone_quarry_stone_production * colony.staffed_stone_quarries(balance),
             ),
         );
     }
@@ -318,7 +314,7 @@ pub fn render(game: &Game) {
             "Birth chance",
             format!(
                 "{}% if food ≥ pop + {}",
-                balance.birth_chance_percent, balance.population_increase_cost
+                balance.population.birth_chance_percent, balance.population.increase_cost
             ),
         );
     }
@@ -368,36 +364,36 @@ pub fn show_help(game: &Game) {
     println!("Build (b):");
     println!(
         "  b hut     -{}w -{}s  +{} max pop",
-        balance.build_hut_wood_cost,
-        balance.build_hut_stone_cost,
-        balance.hut_max_population_increase
+        balance.buildings.build_hut_wood_cost,
+        balance.buildings.build_hut_stone_cost,
+        balance.buildings.hut_max_population_increase
     );
     println!(
         "  b farm    -{}w -{}s  +{} food/day ({} workers/farm)",
-        balance.build_farm_wood_cost,
-        balance.build_farm_stone_cost,
-        balance.farm_food_production,
-        balance.farm_max_workers
+        balance.buildings.build_farm_wood_cost,
+        balance.buildings.build_farm_stone_cost,
+        balance.buildings.farm_food_production,
+        balance.buildings.farm_max_workers
     );
     println!(
         "  b lumber  -{}w -{}s  +{} wood/day ({} workers/yard)",
-        balance.build_lumber_yard_wood_cost,
-        balance.build_lumber_yard_stone_cost,
-        balance.lumber_yard_wood_production,
-        balance.lumber_yard_max_workers
+        balance.buildings.build_lumber_yard_wood_cost,
+        balance.buildings.build_lumber_yard_stone_cost,
+        balance.buildings.lumber_yard_wood_production,
+        balance.buildings.lumber_yard_max_workers
     );
     println!(
         "  b quarry  -{}w -{}s  +{} stone/day ({} workers/quarry)",
-        balance.build_stone_quarry_wood_cost,
-        balance.build_stone_quarry_stone_cost,
-        balance.stone_quarry_stone_production,
-        balance.stone_quarry_max_workers
+        balance.buildings.build_stone_quarry_wood_cost,
+        balance.buildings.build_stone_quarry_stone_cost,
+        balance.buildings.stone_quarry_stone_production,
+        balance.buildings.stone_quarry_max_workers
     );
     println!(
         "  b barn    -{}w -{}s  +{} food storage",
-        balance.build_barn_wood_cost,
-        balance.build_barn_stone_cost,
-        balance.barn_max_food_storage_increase
+        balance.buildings.build_barn_wood_cost,
+        balance.buildings.build_barn_stone_cost,
+        balance.buildings.barn_max_food_storage_increase
     );
     println!();
     println!("Demolish (d): farm / lumber / quarry — no refund");

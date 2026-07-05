@@ -82,7 +82,7 @@ Building additional **Huts** increases the maximum population.
 ## Core Data Model
 
 - [ ] Replace `WorkerSite` with a shared `BuildingKind`
-- [ ] Introduce `ResourceKind`
+- [x] Introduce `ResourceKind`
 - [ ] Replace building counters with `Building`
 - [ ] Replace `Vec<String>` with structured `LogEntry`
 - [ ] Expand `World`
@@ -93,7 +93,7 @@ Building additional **Huts** increases the maximum population.
 
 ## Configuration
 
-- [ ] Split `Balance` into nested structures
+- [x] Split `Balance` into nested structures
 
 ```text
 Balance

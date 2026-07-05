@@ -44,11 +44,13 @@
 mod balance;
 mod colony;
 mod commands;
+mod resource;
 mod world;
 
-pub use balance::Balance;
+pub use balance::{Balance, PopulationBalance};
 pub use colony::Colony;
 pub use commands::{Commands, WorkerSite};
+pub use resource::ResourceKind;
 pub use world::World;
 
 use rand::RngExt;
@@ -145,20 +147,20 @@ impl Game {
 
             // --- Birth: one roll per day if food buffer and hut space exist ---
             if self.colony.population < self.colony.max_population {
-                let min_food = self.colony.population + self.balance.population_increase_cost;
+                let min_food = self.colony.population + self.balance.population.increase_cost;
                 if self.colony.food >= min_food {
-                    let chance = self.balance.birth_chance_percent;
+                    let chance = self.balance.population.birth_chance_percent;
                     let mut rng = rand::rng();
                     let roll: u8 = rng.random_range(0..100);
                     if roll < chance {
                         self.colony.food = self
                             .colony
                             .food
-                            .saturating_sub(self.balance.population_increase_cost);
+                            .saturating_sub(self.balance.population.increase_cost);
                         self.colony.population += 1;
                         self.logs(format!(
                             "Birth! population +1 (chance {chance}%), food -{}",
-                            self.balance.population_increase_cost
+                            self.balance.population.increase_cost
                         ));
                     }
                 }
@@ -190,73 +192,63 @@ impl Game {
         let clamp_after = Self::should_clamp_workers_after_command(&command);
 
         match command {
-            Commands::GetWood => match self.colony.gather_wood(&self.balance) {
-                Ok(gain) => self.logs(format!(
-                    "Gathered wood (+{gain}) with {} free settler(s)",
-                    self.colony.free_workers()
-                )),
-                Err(msg) => self.logs(msg.to_string()),
-            },
-            Commands::GetStone => match self.colony.gather_stone(&self.balance) {
-                Ok(gain) => self.logs(format!(
-                    "Gathered stone (+{gain}) with {} free settler(s)",
-                    self.colony.free_workers()
-                )),
-                Err(msg) => self.logs(msg.to_string()),
-            },
-            Commands::GetFood => match self.colony.gather_food(&self.balance) {
-                Ok(gain) => self.logs(format!(
-                    "Gathered food (+{gain}) with {} free settler(s)",
-                    self.colony.free_workers()
-                )),
-                Err(msg) => self.logs(msg.to_string()),
-            },
+            Commands::GetWood | Commands::GetStone | Commands::GetFood => {
+                let kind = ResourceKind::from_gather_command(&command).unwrap();
+                match self.colony.gather(kind, &self.balance) {
+                    Ok(gain) => self.logs(format!(
+                        "Gathered {} (+{gain}) with {} free settler(s)",
+                        kind.label(),
+                        self.colony.free_workers()
+                    )),
+                    Err(msg) => self.logs(msg.to_string()),
+                }
+            }
             Commands::BuildHut => match self.colony.build_hut(&self.balance) {
                 Ok(gain) => self.logs(format!(
                     "Huts (+{gain}), max pop +{}, spent {} wood, spent {} stone",
-                    self.balance.hut_max_population_increase,
-                    self.balance.build_hut_wood_cost,
-                    self.balance.build_hut_stone_cost
+                    self.balance.buildings.hut_max_population_increase,
+                    self.balance.buildings.build_hut_wood_cost,
+                    self.balance.buildings.build_hut_stone_cost
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
             Commands::BuildLumberYard => match self.colony.build_lumber_yard(&self.balance) {
                 Ok(_) => self.logs(format!(
                     "Lumber yard built (+{} wood/day when {} workers assigned), spent {} wood, {} stone",
-                    self.balance.lumber_yard_wood_production,
-                    self.balance.lumber_yard_max_workers,
-                    self.balance.build_lumber_yard_wood_cost,
-                    self.balance.build_lumber_yard_stone_cost
+                    self.balance.buildings.lumber_yard_wood_production,
+                    self.balance.buildings.lumber_yard_max_workers,
+                    self.balance.buildings.build_lumber_yard_wood_cost,
+                    self.balance.buildings.build_lumber_yard_stone_cost
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
             Commands::BuildStoneQuarry => match self.colony.build_stone_quarry(&self.balance) {
                 Ok(_) => self.logs(format!(
                     "Stone quarry built (+{} stone/day when {} workers assigned), spent {} wood, {} stone",
-                    self.balance.stone_quarry_stone_production,
-                    self.balance.stone_quarry_max_workers,
-                    self.balance.build_stone_quarry_wood_cost,
-                    self.balance.build_stone_quarry_stone_cost
+                    self.balance.buildings.stone_quarry_stone_production,
+                    self.balance.buildings.stone_quarry_max_workers,
+                    self.balance.buildings.build_stone_quarry_wood_cost,
+                    self.balance.buildings.build_stone_quarry_stone_cost
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
             Commands::BuildBarn => match self.colony.build_barn(&self.balance) {
                 Ok(_) => self.logs(format!(
                     "Barn built (+{} food storage, max {}), spent {} wood, spent {} stone",
-                    self.balance.barn_max_food_storage_increase,
+                    self.balance.buildings.barn_max_food_storage_increase,
                     self.colony.max_food,
-                    self.balance.build_barn_wood_cost,
-                    self.balance.build_barn_stone_cost
+                    self.balance.buildings.build_barn_wood_cost,
+                    self.balance.buildings.build_barn_stone_cost
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
             Commands::BuildFarm => match self.colony.build_farm(&self.balance) {
                 Ok(_) => self.logs(format!(
                     "Farm built (+{} food/day when {} workers assigned), spent {} wood, {} stone",
-                    self.balance.farm_food_production,
-                    self.balance.farm_max_workers,
-                    self.balance.build_farm_wood_cost,
-                    self.balance.build_farm_stone_cost
+                    self.balance.buildings.farm_food_production,
+                    self.balance.buildings.farm_max_workers,
+                    self.balance.buildings.build_farm_wood_cost,
+                    self.balance.buildings.build_farm_stone_cost
                 )),
                 Err(msg) => self.logs(msg.to_string()),
             },
@@ -485,7 +477,10 @@ mod tests {
     #[test]
     fn auto_assign_reserve_keeps_settlers_free() {
         let balance = Balance {
-            reserve_free_settlers: 1,
+            population: PopulationBalance {
+                reserve_free_settlers: 1,
+                ..Default::default()
+            },
             ..balance()
         };
         let mut colony = colony(4, 2, 0, 0);
@@ -496,7 +491,10 @@ mod tests {
     #[test]
     fn auto_assign_reserve_larger_than_population_assigns_nobody() {
         let balance = Balance {
-            reserve_free_settlers: 10,
+            population: PopulationBalance {
+                reserve_free_settlers: 10,
+                ..Default::default()
+            },
             ..balance()
         };
         let mut colony = colony(5, 1, 1, 0);
@@ -579,7 +577,7 @@ mod tests {
         assert_workers(&colony, &balance, 2, 0, 0, 3);
         assert_eq!(
             colony.wood_yield(&balance),
-            Colony::yield_from_pop(balance.gather_wood_base, 3, 40)
+            Colony::yield_from_pop(balance.gather.gather_wood_base, 3, 40)
         );
     }
 
