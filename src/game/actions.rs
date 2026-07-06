@@ -3,7 +3,7 @@
 use super::BuildingKind;
 use super::ResourceKind;
 
-/// Everything the player can do in one turn (before day advance, except worker commands).
+/// Everything the player can do in one turn (before day advance, except free-turn commands).
 #[derive(PartialEq, Debug)]
 pub enum Actions {
     /// Manual resource gathering using free settlers (`g wood`, …).
@@ -12,13 +12,15 @@ pub enum Actions {
     Build(BuildingKind),
     /// Set total workers on a production type (`w farm 2`, …).
     SetWorkers { kind: BuildingKind, count: usize },
+    /// Answer a pending yes/no event (`y` / `n`).
+    EventAnswer(bool),
     /// Exit the game loop.
     Quit,
 }
 
 impl Actions {
-    /// Worker commands do not advance the day (handled in UI loop).
-    pub fn is_worker_management(&self) -> bool {
-        matches!(self, Actions::SetWorkers { .. })
+    /// `w` and answering a pending event (`y` / `n`) — no [`super::Game::tick`].
+    pub fn is_free_turn(&self) -> bool {
+        matches!(self, Actions::SetWorkers { .. } | Actions::EventAnswer(_))
     }
 }

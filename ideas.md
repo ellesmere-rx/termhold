@@ -8,3 +8,7 @@ meta: food → farm → lumber → quarry → hut → barn
 
 - **NEED PASSIVE INCOME REBALANCE**
 Active < Passive!
+
+- Move hardcoded vars and tables into json for modding!
+
+- Another mechanic for event choosing

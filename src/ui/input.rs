@@ -13,12 +13,18 @@ pub enum ActionInput {
     Empty,
 }
 
-pub fn classify_input(input: &str) -> ActionInput {
+/// Parse input; when `pending_event`, only y/n (and help) are accepted.
+pub fn classify_input(input: &str, pending_event: bool) -> ActionInput {
     if input.is_empty() {
         return ActionInput::Empty;
     }
     if is_help_input(input) {
         return ActionInput::Help;
+    }
+    if pending_event {
+        return parse_event_answer(input)
+            .map(ActionInput::Action)
+            .unwrap_or(ActionInput::Invalid);
     }
     match parse_line(input) {
         Some(action) => ActionInput::Action(action),
@@ -28,6 +34,15 @@ pub fn classify_input(input: &str) -> ActionInput {
 
 pub fn is_help_input(input: &str) -> bool {
     matches!(input.trim().to_lowercase().as_str(), "help" | "?" | "h")
+}
+
+fn parse_event_answer(input: &str) -> Option<Actions> {
+    // y / yes / n / no and short aliases; help is handled before this runs.
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" | "1" | "да" => Some(Actions::EventAnswer(true)),
+        "n" | "no" | "0" | "нет" => Some(Actions::EventAnswer(false)),
+        _ => None,
+    }
 }
 
 pub fn parse_line(input: &str) -> Option<Actions> {

@@ -308,24 +308,32 @@ pub fn render(game: &Game) {
     }
     println!();
 
-    render_build_menu(balance);
+    // Pending event replaces BUILD + ACTIONS until the player answers.
+    if let Some(event) = game.pending_event_def() {
+        section("EVENT");
+        row("", event.title);
+        row("", event.prompt);
+        println!();
+    } else {
+        render_build_menu(balance);
 
-    section("ACTIONS");
-    row("g wood", gather_short(wood_active, free, " wood"));
-    row("g stone", gather_short(stone_active, free, " stone"));
-    row(
-        "g food",
-        food_gather_hint(
-            food_active,
-            food_potential,
-            food_net_if_gather,
-            colony.food,
-            colony.max_food,
-            free,
-        ),
-    );
-    row("w / help", "free — no day pass");
-    println!();
+        section("ACTIONS");
+        row("g wood", gather_short(wood_active, free, " wood"));
+        row("g stone", gather_short(stone_active, free, " stone"));
+        row(
+            "g food",
+            food_gather_hint(
+                food_active,
+                food_potential,
+                food_net_if_gather,
+                colony.food,
+                colony.max_food,
+                free,
+            ),
+        );
+        row("w / help", "free — no day pass");
+        println!();
+    }
 
     print_logs(game);
     println!();
@@ -343,7 +351,7 @@ pub fn show_help(game: &Game) {
     println!();
     println!("Timing:");
     println!("  g, b — cost 1 day");
-    println!("  w, help — free (no day pass)");
+    println!("  w, y/n (event), help — free (no day pass)");
     println!();
     println!("Gather (g):");
     println!("  g wood / g stone / g food");
@@ -426,6 +434,7 @@ pub const INVALID_COMMAND_MSG: &str = "The settlers did not understand what you 
 
 pub const EMPTY_COMMAND_MSG: &str = "The settlers, like you, decided to do nothing today.";
 
-pub fn read_action() -> ActionInput {
-    input::classify_input(&read_input())
+/// Read one input line; when `pending_event`, only event answers are parsed.
+pub fn read_action(pending_event: bool) -> ActionInput {
+    input::classify_input(&read_input(), pending_event)
 }

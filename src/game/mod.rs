@@ -4,6 +4,7 @@ mod actions;
 mod balance;
 mod building;
 mod colony;
+mod events;
 mod resource;
 mod world;
 
@@ -11,8 +12,11 @@ pub use actions::Actions;
 pub use balance::Balance;
 pub use building::BuildingKind;
 pub use colony::Colony;
+pub use events::{PendingEvent, YesNoEvent};
 pub use resource::ResourceKind;
 pub use world::World;
+
+use std::collections::{HashMap, HashSet};
 
 use rand::RngExt;
 
@@ -30,6 +34,12 @@ pub struct Game {
     pub logs: Vec<String>,
     /// Tunable constants (costs, yields, worker slots, birth rules).
     pub balance: Balance,
+    /// Blocked yes/no event — UI accepts only `y`/`n` until answered.
+    pub pending_event: Option<PendingEvent>,
+    /// [`events::YesNoEvent::once`] ids that already received a successful answer.
+    events_fired: HashSet<&'static str>,
+    /// Day of last successful answer per event id (for cooldown).
+    event_last_day: HashMap<&'static str, usize>,
     /// Set when population hits 0 or day reaches [`WIN_DAY`].
     pub gameover: bool,
 }
@@ -120,7 +130,89 @@ impl Game {
         }
     }
 
-    /// End-of-day simulation: food, births, spoilage, worker clamp, passive income, day++.
+    /// True if this event cannot roll yet (`once` already fired, or cooldown active).
+    fn event_blocked(&self, event: &YesNoEvent) -> bool {
+        if event.once && self.events_fired.contains(event.id) {
+            return true;
+        }
+        if let Some(cooldown) = event.cooldown_days {
+            if let Some(&last) = self.event_last_day.get(event.id) {
+                if self.world.days.saturating_sub(last) < cooldown {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Record that the player answered this event (`once` / cooldown tracking).
+    fn mark_event_answered(&mut self, event: &YesNoEvent) {
+        if event.once {
+            self.events_fired.insert(event.id);
+        }
+        if event.once || event.cooldown_days.is_some() {
+            self.event_last_day.insert(event.id, self.world.days);
+        }
+    }
+
+    /// Roll random events at end of day. See [`events`] module docs for selection rules.
+    fn try_roll_event(&mut self) {
+        if self.pending_event.is_some() || self.gameover {
+            return;
+        }
+
+        let mut rng = rand::rng();
+        for event in events::EVENTS {
+            if self.world.days < event.min_day {
+                continue;
+            }
+            if self.event_blocked(event) {
+                continue;
+            }
+            if rng.random_range(0..100) < event.chance_percent {
+                self.pending_event = Some(PendingEvent {
+                    event_id: event.id,
+                });
+                self.logs(format!("Event: {}", event.title));
+                return;
+            }
+        }
+    }
+
+    /// Run `on_yes` / `on_no` for the pending event and write the returned log line.
+    ///
+    /// On `Err` the event is restored — player must answer again. Most events use `Ok`
+    /// even when the colony cannot pay (they apply the **no** outcome inline).
+    fn resolve_event_answer(&mut self, yes: bool) {
+        let Some(pending) = self.pending_event.take() else {
+            return;
+        };
+        let Some(event) = events::find_event(pending.event_id) else {
+            return;
+        };
+
+        let apply = if yes { event.on_yes } else { event.on_no };
+        match apply(&mut self.colony, &self.balance) {
+            Ok(log_text) => {
+                self.logs(log_text.to_string());
+                self.mark_event_answered(event);
+                self.check_end_conditions();
+            }
+            Err(error_text) => {
+                self.logs(error_text.to_string());
+                self.pending_event = Some(pending);
+            }
+        }
+    }
+
+    /// Full event definition for UI (`title`, `prompt`) while one is pending.
+    pub fn pending_event_def(&self) -> Option<&'static YesNoEvent> {
+        self.pending_event
+            .as_ref()
+            .and_then(|pending| events::find_event(pending.event_id))
+    }
+
+    /// End-of-day simulation: food, births, spoilage, passive income, day++, then event roll.
     pub fn tick(&mut self) {
         if self.colony.population == 0 {
             self.check_end_conditions();
@@ -179,8 +271,8 @@ impl Game {
                 .saturating_mul(deficit as u8)
                 .min(100);
 
-            let guaranteed = self.colony.starvation_days
-                >= self.balance.population.starvation_days_to_death;
+            let guaranteed =
+                self.colony.starvation_days >= self.balance.population.starvation_days_to_death;
             if guaranteed || roll < chance {
                 self.colony.population = self.colony.population.saturating_sub(1);
                 self.logs(if guaranteed {
@@ -212,9 +304,10 @@ impl Game {
 
         self.world.days += 1;
         self.check_end_conditions();
+        self.try_roll_event();
     }
 
-    /// Apply one player action. Worker commands skip the day in the UI loop.
+    /// Apply one player action. [`Actions::is_free_turn`] commands skip the day in the UI loop.
     pub fn process_action(&mut self, action: Actions) {
         let clamp_after = Self::should_clamp_workers_after_action(&action);
 
@@ -260,6 +353,7 @@ impl Game {
                 }
             }
 
+            Actions::EventAnswer(yes) => self.resolve_event_answer(yes),
             Actions::Quit => {}
         }
 
@@ -285,6 +379,9 @@ impl Default for Game {
             world: World::default(),
             logs: Vec::with_capacity(100),
             balance: Balance::default(),
+            pending_event: None,
+            events_fired: HashSet::new(),
+            event_last_day: HashMap::new(),
             gameover: false,
         }
     }

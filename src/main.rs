@@ -8,14 +8,16 @@ fn main() {
 
     while !game.gameover {
         ui::render(&game);
-        match ui::read_action() {
+        // While an event is pending, invalid/empty input must not advance the day.
+        let pending_event = game.pending_event.is_some();
+        match ui::read_action(pending_event) {
             ui::ActionInput::Action(action) => {
                 if action == game::Actions::Quit {
                     break;
                 }
-                let is_worker = action.is_worker_management();
+                let free_turn = action.is_free_turn();
                 game.process_action(action);
-                if !is_worker {
+                if !free_turn {
                     game.tick();
                 }
             }
@@ -23,12 +25,20 @@ fn main() {
                 ui::show_help(&game);
             }
             ui::ActionInput::Invalid => {
-                game.logs(ui::INVALID_COMMAND_MSG.into());
-                game.tick();
+                if pending_event {
+                    game.logs("Answer the event: y or n.".into());
+                } else {
+                    game.logs(ui::INVALID_COMMAND_MSG.into());
+                    game.tick();
+                }
             }
             ui::ActionInput::Empty => {
-                game.logs(ui::EMPTY_COMMAND_MSG.into());
-                game.tick();
+                if pending_event {
+                    game.logs("Answer the event: y or n.".into());
+                } else {
+                    game.logs(ui::EMPTY_COMMAND_MSG.into());
+                    game.tick();
+                }
             }
         }
     }
