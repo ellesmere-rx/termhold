@@ -35,7 +35,7 @@ pub struct Game {
 }
 
 impl Game {
-    /// Log current aggregate worker counts after `w` / `w auto`.
+    /// Log current aggregate worker counts after `w`.
     fn log_worker_assignment(&mut self) {
         self.logs(format!(
             "Workers: farms {}, lumber {}, quarries {} ({} free for gathering)",
@@ -44,15 +44,6 @@ impl Game {
             self.colony.workers_on(BuildingKind::StoneQuarry),
             self.colony.free_workers(),
         ));
-    }
-
-    /// One-shot auto-assign (`w auto` only); does not advance the day.
-    fn run_auto_assign_workers(&mut self) {
-        self.colony.auto_assign_workers(&self.balance);
-        self.log_worker_assignment();
-        for msg in self.colony.understaffed_messages(&self.balance) {
-            self.logs(msg);
-        }
     }
 
     /// After new production building: cap workers to valid slots and population.
@@ -267,10 +258,6 @@ impl Game {
                     }
                     Err(msg) => self.logs(msg.to_string()),
                 }
-            }
-            Actions::WorkersAuto => {
-                self.logs("Auto-assign (farm → lumber → quarry).".into());
-                self.run_auto_assign_workers();
             }
 
             Actions::Quit => {}

@@ -48,7 +48,7 @@ pub struct BuildingList {
 }
 
 impl BuildingKind {
-    /// Production types in auto-assign and clamp priority: farm first, then lumber, then quarry.
+    /// Production types in worker clamp priority: farm first, then lumber, then quarry.
     pub const PRODUCTION: [Self; 3] = [Self::Farm, Self::LumberYard, Self::StoneQuarry];
 
     /// Short CLI / log label (`farm`, `lumber`, `quarry`, …).
@@ -188,35 +188,9 @@ impl BuildingList {
         }
     }
 
-    /// Reset production assignments, then fill from `available` settlers.
-    ///
-    /// Priority: [`BuildingKind::PRODUCTION`] order (farm → lumber → quarry),
-    /// then list order within each kind. Used by `w auto`.
-    pub fn auto_assign(&mut self, mut available: usize, balance: &BuildingsBalance) {
-        for building in &mut self.items {
-            if building.kind.employs_workers() {
-                building.assigned = 0;
-            }
-        }
-
-        for kind in BuildingKind::PRODUCTION {
-            let required = kind.workers_required(balance);
-            for building in &mut self.items {
-                if building.kind != kind || available == 0 {
-                    continue;
-                }
-                let need = required.saturating_sub(building.assigned);
-                let assign = available.min(need);
-                building.assigned += assign;
-                available -= assign;
-            }
-        }
-    }
-
     /// Cap each building at its required crew, then drop assignments if total exceeds `population`.
     ///
-    /// Unassign order (reverse of auto-assign): quarry → lumber → farm,
-    /// last instance in list first within each kind.
+    /// Unassign order: quarry → lumber → farm, last instance in list first within each kind.
     pub fn clamp_workers(&mut self, balance: &BuildingsBalance, population: usize) {
         for building in &mut self.items {
             if building.kind.employs_workers() {

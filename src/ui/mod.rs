@@ -403,7 +403,6 @@ pub fn show_help(game: &Game) {
             colony.workers_needed(BuildingKind::StoneQuarry, balance)
         );
     }
-    println!("  w auto — fill farm → lumber → quarry once");
     println!();
     print!("Press Enter to continue...");
     io::Write::flush(&mut io::stdout()).unwrap();

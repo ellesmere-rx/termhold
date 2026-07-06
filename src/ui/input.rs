@@ -57,10 +57,6 @@ fn parse_build(target: &str) -> Option<Actions> {
 }
 
 fn parse_workers(input: &str) -> Option<Actions> {
-    if input == "auto" {
-        return Some(Actions::WorkersAuto);
-    }
-
     let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.len() < 2 {
         return None;

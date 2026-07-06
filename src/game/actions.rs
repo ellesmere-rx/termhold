@@ -12,8 +12,6 @@ pub enum Actions {
     Build(BuildingKind),
     /// Set total workers on a production type (`w farm 2`, …).
     SetWorkers { kind: BuildingKind, count: usize },
-    /// Auto-fill production slots (`w auto`).
-    WorkersAuto,
     /// Exit the game loop.
     Quit,
 }
@@ -21,6 +19,6 @@ pub enum Actions {
 impl Actions {
     /// Worker commands do not advance the day (handled in UI loop).
     pub fn is_worker_management(&self) -> bool {
-        matches!(self, Actions::SetWorkers { .. } | Actions::WorkersAuto)
+        matches!(self, Actions::SetWorkers { .. })
     }
 }

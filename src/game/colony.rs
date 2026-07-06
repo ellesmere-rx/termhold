@@ -61,17 +61,6 @@ impl Colony {
         self.buildings.total_assigned()
     }
 
-    /// `w auto`: fill production buildings from available settlers.
-    ///
-    /// Respects [`PopulationBalance::reserve_free_settlers`](super::balance::PopulationBalance::reserve_free_settlers)
-    /// so some settlers may stay free for gathering.
-    pub(crate) fn auto_assign_workers(&mut self, balance: &Balance) {
-        let available = self
-            .population
-            .saturating_sub(balance.population.reserve_free_settlers);
-        self.buildings.auto_assign(available, &balance.buildings);
-    }
-
     /// `w <kind> <count>`: set total workers on a production type.
     ///
     /// Validates against slot capacity and total population (including other kinds).
@@ -187,7 +176,6 @@ impl Colony {
     }
 
     /// Construct one building: pay costs, add instance, apply hut/barn cap bonuses.
-    /// Does not auto-assign workers.
     pub fn build(&mut self, kind: BuildingKind, balance: &Balance) -> Result<usize, &'static str> {
         let wood_cost = kind.build_wood_cost(&balance.buildings);
         let stone_cost = kind.build_stone_cost(&balance.buildings);
