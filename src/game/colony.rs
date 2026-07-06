@@ -243,13 +243,14 @@ impl Colony {
     }
 }
 
-impl Default for Colony {
-    fn default() -> Self {
+impl Colony {
+    /// New expedition camp with one hut and starting supplies.
+    pub fn new(name: impl Into<String>) -> Self {
         let mut buildings = BuildingList::default();
         buildings.add(BuildingKind::Hut);
 
         Self {
-            name: "Default colony".to_string(),
+            name: name.into(),
             wood: 50,
             stone: 30,
             food: 20,

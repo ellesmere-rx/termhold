@@ -12,7 +12,7 @@ pub use actions::Actions;
 pub use balance::Balance;
 pub use building::BuildingKind;
 pub use colony::Colony;
-pub use events::{PendingEvent, YesNoEvent};
+pub use events::PendingEvent;
 pub use resource::ResourceKind;
 pub use world::World;
 
@@ -36,7 +36,7 @@ pub struct Game {
     pub balance: Balance,
     /// Blocked yes/no event — UI accepts only `y`/`n` until answered.
     pub pending_event: Option<PendingEvent>,
-    /// [`events::YesNoEvent::once`] ids that already received a successful answer.
+    /// [`events::GameEvent::once`] ids that already fired successfully.
     events_fired: HashSet<&'static str>,
     /// Day of last successful answer per event id (for cooldown).
     event_last_day: HashMap<&'static str, usize>,
@@ -45,6 +45,23 @@ pub struct Game {
 }
 
 impl Game {
+    /// Start a new run; writes the first log line with `colony_name`.
+    pub fn new(colony_name: impl Into<String>) -> Self {
+        let name = colony_name.into();
+        let mut game = Self {
+            colony: Colony::new(name.clone()),
+            world: World::default(),
+            logs: Vec::with_capacity(100),
+            balance: Balance::default(),
+            pending_event: None,
+            events_fired: HashSet::new(),
+            event_last_day: HashMap::new(),
+            gameover: false,
+        };
+        game.logs(format!("{name} makes camp at the frontier."));
+        game
+    }
+
     /// Log current aggregate worker counts after `w`.
     fn log_worker_assignment(&mut self) {
         self.logs(format!(
@@ -131,27 +148,51 @@ impl Game {
     }
 
     /// True if this event cannot roll yet (`once` already fired, or cooldown active).
-    fn event_blocked(&self, event: &YesNoEvent) -> bool {
+    fn event_blocked(&self, event: &events::GameEvent) -> bool {
         if event.once && self.events_fired.contains(event.id) {
             return true;
         }
-        if let Some(cooldown) = event.cooldown_days {
-            if let Some(&last) = self.event_last_day.get(event.id) {
-                if self.world.days.saturating_sub(last) < cooldown {
+        if let Some(cooldown) = event.cooldown_days
+            && let Some(&last) = self.event_last_day.get(event.id)
+                && self.world.days.saturating_sub(last) < cooldown {
                     return true;
                 }
-            }
-        }
         false
     }
 
-    /// Record that the player answered this event (`once` / cooldown tracking).
-    fn mark_event_answered(&mut self, event: &YesNoEvent) {
+    /// Record that this event completed (`once` / cooldown tracking).
+    fn mark_event_answered(&mut self, event: &events::GameEvent) {
         if event.once {
             self.events_fired.insert(event.id);
         }
         if event.once || event.cooldown_days.is_some() {
             self.event_last_day.insert(event.id, self.world.days);
+        }
+    }
+
+    /// `exact_day` match, else `chance_percent` roll.
+    fn event_triggered(&self, event: &events::GameEvent, roll: u8) -> bool {
+        if event.exact_day == Some(self.world.days) {
+            return true;
+        }
+        event.chance_percent > 0 && roll < event.chance_percent
+    }
+
+    /// Apply a rolled event: Choice sets pending, Auto runs immediately.
+    fn fire_event(&mut self, event: &'static events::GameEvent) {
+        self.logs(format!("Event: {}", event.title));
+        match event.effect {
+            events::EventEffect::Choice { .. } => {
+                self.pending_event = Some(PendingEvent { event_id: event.id });
+            }
+            events::EventEffect::Auto(apply) => match apply(&mut self.colony, &self.balance) {
+                Ok(msg) => {
+                    self.logs(msg.to_string());
+                    self.mark_event_answered(event);
+                    self.check_end_conditions();
+                }
+                Err(msg) => self.logs(msg.to_string()),
+            },
         }
     }
 
@@ -166,14 +207,16 @@ impl Game {
             if self.world.days < event.min_day {
                 continue;
             }
+            if let Some(kind) = event.requires_building
+                && self.colony.count(kind) == 0 {
+                    continue;
+                }
             if self.event_blocked(event) {
                 continue;
             }
-            if rng.random_range(0..100) < event.chance_percent {
-                self.pending_event = Some(PendingEvent {
-                    event_id: event.id,
-                });
-                self.logs(format!("Event: {}", event.title));
+            let roll: u8 = rng.random_range(0..100);
+            if self.event_triggered(event, roll) {
+                self.fire_event(event);
                 return;
             }
         }
@@ -191,7 +234,11 @@ impl Game {
             return;
         };
 
-        let apply = if yes { event.on_yes } else { event.on_no };
+        let events::EventEffect::Choice { on_yes, on_no, .. } = event.effect else {
+            return;
+        };
+
+        let apply = if yes { on_yes } else { on_no };
         match apply(&mut self.colony, &self.balance) {
             Ok(log_text) => {
                 self.logs(log_text.to_string());
@@ -205,8 +252,8 @@ impl Game {
         }
     }
 
-    /// Full event definition for UI (`title`, `prompt`) while one is pending.
-    pub fn pending_event_def(&self) -> Option<&'static YesNoEvent> {
+    /// Full event definition for UI while a Choice event is pending.
+    pub fn pending_event_def(&self) -> Option<&'static events::GameEvent> {
         self.pending_event
             .as_ref()
             .and_then(|pending| events::find_event(pending.event_id))
@@ -369,20 +416,5 @@ impl Game {
 
         let extra = self.logs.len().saturating_sub(MAX_LOG_SIZE);
         self.logs.drain(..extra);
-    }
-}
-
-impl Default for Game {
-    fn default() -> Self {
-        Self {
-            colony: Colony::default(),
-            world: World::default(),
-            logs: Vec::with_capacity(100),
-            balance: Balance::default(),
-            pending_event: None,
-            events_fired: HashSet::new(),
-            event_last_day: HashMap::new(),
-            gameover: false,
-        }
     }
 }

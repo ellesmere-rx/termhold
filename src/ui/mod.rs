@@ -1,6 +1,7 @@
 //! Terminal UI: render + input.
 
 mod input;
+mod welcome;
 
 use std::io;
 
@@ -8,6 +9,8 @@ use crate::game::BuildingKind;
 use crate::game::Game;
 
 pub use input::ActionInput;
+
+pub use welcome::run as run_welcome;
 
 const WIDTH: usize = 80;
 const VISIBLE_LOGS: usize = 10;
@@ -36,12 +39,27 @@ fn row(label: &str, value: impl std::fmt::Display) {
     println!("  {label:<LABEL_W$} {value}");
 }
 
-fn clip(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
+fn wrap_lines(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current);
+            current = word.to_string();
+        }
     }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    lines
 }
 
 fn signed_delta(value: isize) -> String {
@@ -253,7 +271,12 @@ pub fn render(game: &Game) {
     section("PER DAY");
     let deficit = colony.population.saturating_sub(rations);
     let upkeep_label = if deficit > 0 {
-        format!("{} food (fed {}/{})", signed_delta(-upkeep), rations, colony.population)
+        format!(
+            "{} food (fed {}/{})",
+            signed_delta(-upkeep),
+            rations,
+            colony.population
+        )
     } else {
         format!("{} food", signed_delta(-upkeep))
     };
@@ -310,10 +333,12 @@ pub fn render(game: &Game) {
 
     // Pending event replaces BUILD + ACTIONS until the player answers.
     if let Some(event) = game.pending_event_def() {
-        section("EVENT");
-        row("", event.title);
-        row("", event.prompt);
-        println!();
+        if let Some(prompt) = event.choice_prompt() {
+            section("EVENT");
+            row("", event.title);
+            row("", prompt);
+            println!();
+        }
     } else {
         render_build_menu(balance);
 
@@ -426,7 +451,9 @@ pub fn print_logs(game: &Game) {
         return;
     }
     for log in &game.logs[start..] {
-        println!("  {}", clip(log, max));
+        for line in wrap_lines(log, max) {
+            println!("  {line}");
+        }
     }
 }
 

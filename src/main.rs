@@ -2,13 +2,11 @@ mod game;
 mod ui;
 
 fn main() {
-    println!("[ Start ]");
-
-    let mut game = game::Game::default();
+    let colony_name = ui::run_welcome();
+    let mut game = game::Game::new(colony_name);
 
     while !game.gameover {
         ui::render(&game);
-        // While an event is pending, invalid/empty input must not advance the day.
         let pending_event = game.pending_event.is_some();
         match ui::read_action(pending_event) {
             ui::ActionInput::Action(action) => {
