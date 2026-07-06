@@ -2,7 +2,9 @@
 
 A simple CLI colony management game written in Rust.
 
-Manage resources, expand your settlement, assign workers and survive as long as possible.
+Game can work with different UI systems. Now it includes only terminal UI.
+
+Manage resources, expand your settlement and survive as long as possible.
 
 ---
 
@@ -105,7 +107,7 @@ Balance
 
 ## Commands & Actions
 
-Replace specialized commands
+- [x] Replace specialized commands
 
 ```rust
 BuildFarm
@@ -117,9 +119,9 @@ BuildQuarry
 with generic actions
 
 ```rust
-Command::Build(BuildingKind)
-Command::Demolish(BuildingKind)
-Command::Gather(ResourceKind)
+Actions::Build(BuildingKind)
+Actions::Demolish(BuildingKind)
+Actions::Gather(ResourceKind)
 ```
 
 ## Game Systems

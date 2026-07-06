@@ -26,8 +26,8 @@ impl GatherBalance {
 impl Default for GatherBalance {
     fn default() -> Self {
         Self {
-            gather_wood_base: 5,
-            gather_stone_base: 5,
+            gather_wood_base: 3,
+            gather_stone_base: 3,
             gather_food_base: 5,
         }
     }

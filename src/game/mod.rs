@@ -18,7 +18,7 @@ use rand::RngExt;
 
 const MAX_LOG_SIZE: usize = 100;
 /// Survive this many days to win.
-pub const WIN_DAY: usize = 180;
+pub const WIN_DAY: usize = 365;
 
 /// Root game state: colony, calendar, balance tuning, and event log.
 pub struct Game {
@@ -117,25 +117,43 @@ impl Game {
         self.logs(msg);
     }
 
-    /// End-of-day simulation: food, births, spoilage, worker clamp, passive income, day++.
-    pub fn tick(&mut self) {
+    fn check_end_conditions(&mut self) {
         if self.colony.population == 0 {
-            println!("Gameover. Colony is dead.");
+            if !self.gameover {
+                println!("Gameover. Colony is dead.");
+            }
             self.gameover = true;
         } else if self.world.days >= WIN_DAY {
             println!("Victory! Colony survived {WIN_DAY} days.");
             self.gameover = true;
         }
+    }
 
-        if self.colony.food < self.colony.population {
-            self.colony.food = 0;
-            self.logs("Not enough food! Colony is starving, population is decreasing (-1)".into());
-            self.colony.population = self.colony.population.saturating_sub(1);
-        } else {
-            self.colony.food -= self.colony.population;
-            self.logs(format!("Colony consumes {} food", self.colony.population));
+    /// End-of-day simulation: food, births, spoilage, worker clamp, passive income, day++.
+    pub fn tick(&mut self) {
+        if self.colony.population == 0 {
+            self.check_end_conditions();
+            return;
+        }
 
-            if self.colony.population < self.colony.max_population {
+        if self.world.days >= WIN_DAY {
+            println!("Victory! Colony survived {WIN_DAY} days.");
+            self.gameover = true;
+            return;
+        }
+
+        let pop = self.colony.population;
+        let rations = self.colony.food.min(pop);
+        self.colony.food -= rations;
+        let deficit = pop - rations;
+
+        if deficit == 0 {
+            self.colony.starvation_days = 0;
+            self.logs(format!("Colony consumes {rations} food"));
+
+            if self.colony.population >= self.balance.population.min_population_for_birth
+                && self.colony.population < self.colony.max_population
+            {
                 let min_food = self.colony.population + self.balance.population.increase_cost;
                 if self.colony.food >= min_food {
                     let chance = self.balance.population.birth_chance_percent;
@@ -152,6 +170,37 @@ impl Game {
                             self.balance.population.increase_cost
                         ));
                     }
+                }
+            }
+        } else {
+            self.colony.starvation_days += 1;
+            self.logs(format!(
+                "Hungry: fed {rations}/{pop} ({deficit} unfed, day {} of {})",
+                self.colony.starvation_days, self.balance.population.starvation_days_to_death,
+            ));
+
+            let mut rng = rand::rng();
+            let roll: u8 = rng.random_range(0..100);
+            let chance = self
+                .balance
+                .population
+                .starvation_death_chance_percent
+                .saturating_mul(deficit as u8)
+                .min(100);
+
+            let guaranteed = self.colony.starvation_days
+                >= self.balance.population.starvation_days_to_death;
+            if guaranteed || roll < chance {
+                self.colony.population = self.colony.population.saturating_sub(1);
+                self.logs(if guaranteed {
+                    "A settler died of starvation (prolonged hunger).".into()
+                } else {
+                    format!("A settler died of starvation ({chance}% roll failed).")
+                });
+                if self.colony.population == 0 {
+                    self.check_end_conditions();
+                    self.world.days += 1;
+                    return;
                 }
             }
         }
@@ -171,6 +220,7 @@ impl Game {
         self.log_food_overflow(food_lost);
 
         self.world.days += 1;
+        self.check_end_conditions();
     }
 
     /// Apply one player action. Worker commands skip the day in the UI loop.

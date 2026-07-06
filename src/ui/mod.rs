@@ -153,16 +153,19 @@ pub fn render(game: &Game) {
     let passive_wood = colony.passive_wood(balance);
     let passive_stone = colony.passive_stone(balance);
     let passive_food = colony.passive_food(balance);
+    let rations = colony.food.min(colony.population);
     // Tick order: eat first, then passive — not current storage headroom.
-    let food_after_upkeep = colony.food.saturating_sub(colony.population);
+    let food_after_upkeep = colony.food - rations;
     let passive_food_effective =
         passive_food.min(colony.max_food.saturating_sub(food_after_upkeep));
-    let upkeep = colony.population as isize;
+    let upkeep = rations as isize;
     let food_after_gather = (colony.food + food_active).min(colony.max_food);
-    let food_after_gather_upkeep = food_after_gather.saturating_sub(colony.population);
+    let gather_rations = food_after_gather.min(colony.population);
+    let food_after_gather_upkeep = food_after_gather - gather_rations;
     let passive_food_if_gather =
         passive_food.min(colony.max_food.saturating_sub(food_after_gather_upkeep));
-    let food_net_if_gather = food_active as isize + passive_food_if_gather as isize - upkeep;
+    let food_net_if_gather =
+        food_active as isize + passive_food_if_gather as isize - gather_rations as isize;
     let food_net_passive = passive_food_effective as isize - upkeep;
     let free = colony.free_workers();
     let assigned = colony.assigned_workers();
@@ -248,7 +251,34 @@ pub fn render(game: &Game) {
     println!();
 
     section("PER DAY");
-    row("Food upkeep", format!("{} food", signed_delta(-upkeep)));
+    let deficit = colony.population.saturating_sub(rations);
+    let upkeep_label = if deficit > 0 {
+        format!("{} food (fed {}/{})", signed_delta(-upkeep), rations, colony.population)
+    } else {
+        format!("{} food", signed_delta(-upkeep))
+    };
+    row("Food upkeep", upkeep_label);
+    if deficit > 0 {
+        let death_chance = balance
+            .population
+            .starvation_death_chance_percent
+            .saturating_mul(deficit as u8)
+            .min(100);
+        let next_streak = colony.starvation_days + 1;
+        let guaranteed = next_streak >= balance.population.starvation_days_to_death;
+        let risk = if guaranteed {
+            "100% (streak limit)".to_string()
+        } else {
+            format!("{death_chance}%")
+        };
+        row(
+            "Hunger",
+            format!(
+                "{deficit} unfed, death risk {risk}, streak {next_streak}/{}",
+                balance.population.starvation_days_to_death
+            ),
+        );
+    }
     if passive_wood > 0 || passive_stone > 0 || passive_food_effective > 0 {
         row(
             "Passive",
@@ -264,7 +294,10 @@ pub fn render(game: &Game) {
         "Food net",
         format!("{} without gather", signed_delta(food_net_passive)),
     );
-    if colony.population < colony.max_population {
+    if colony.population >= balance.population.min_population_for_birth
+        && colony.population < colony.max_population
+        && rations >= colony.population
+    {
         row(
             "Birth chance",
             format!(

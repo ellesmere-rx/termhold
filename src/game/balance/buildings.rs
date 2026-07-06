@@ -41,28 +41,28 @@ pub struct BuildingsBalance {
 impl Default for BuildingsBalance {
     fn default() -> Self {
         Self {
-            hut_max_population_increase: 5,
-            build_hut_wood_cost: 10,
-            build_hut_stone_cost: 10,
+            hut_max_population_increase: 3,
+            build_hut_wood_cost: 12,
+            build_hut_stone_cost: 12,
 
-            build_lumber_yard_wood_cost: 20,
-            build_lumber_yard_stone_cost: 50,
-            lumber_yard_wood_production: 3,
+            build_lumber_yard_wood_cost: 12,
+            build_lumber_yard_stone_cost: 15,
+            lumber_yard_wood_production: 5,
             lumber_yard_max_workers: 2,
 
-            build_stone_quarry_wood_cost: 50,
-            build_stone_quarry_stone_cost: 20,
-            stone_quarry_stone_production: 2,
+            build_stone_quarry_wood_cost: 18,
+            build_stone_quarry_stone_cost: 18,
+            stone_quarry_stone_production: 4,
             stone_quarry_max_workers: 2,
 
-            build_farm_wood_cost: 15,
-            build_farm_stone_cost: 15,
+            build_farm_wood_cost: 18,
+            build_farm_stone_cost: 18,
             farm_food_production: 2,
             farm_max_workers: 2,
 
             barn_max_food_storage_increase: 15,
-            build_barn_wood_cost: 20,
-            build_barn_stone_cost: 30,
+            build_barn_wood_cost: 32,
+            build_barn_stone_cost: 32,
         }
     }
 }

@@ -23,6 +23,8 @@ pub struct Colony {
     pub max_population: usize,
     /// Food storage cap; increased by barns. Excess food spoils at end of tick.
     pub max_food: usize,
+    /// Current days of starvation before death.
+    pub starvation_days: usize,
     /// All built structures and their per-instance worker assignments.
     pub buildings: BuildingList,
 }
@@ -266,6 +268,7 @@ impl Default for Colony {
             population: 5,
             max_population: 5,
             max_food: 25,
+            starvation_days: 0,
             buildings,
         }
     }
